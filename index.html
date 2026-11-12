@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>TrackTime</title>
+  <meta name="description" content="Automatic velodrome lap timing with spoken lap times.">
+  <meta name="theme-color" content="#0a1622">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js" async></script>
+</head>
+<body>
+  <main id="stage" class="stage">
+    <video id="video" playsinline muted autoplay hidden></video>
+    <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
+
+    <section id="intro" class="intro">
+      <h1>TrackTime</h1>
+      <p>Put the phone on a tripod at the edge of the track, lined up with the finish line, so the white line runs down the middle of the picture.</p>
+      <ol>
+        <li>Drag the two markers onto the finish line: one where it meets the top of the track, one at the inner edge.</li>
+        <li>Connect the Bluetooth speaker.</li>
+        <li>Tap <strong>Start timing</strong> while the line is clear.</li>
+      </ol>
+      <button id="cameraBtn" class="btn primary" type="button">Turn on camera</button>
+      <p id="cameraError" class="error" role="alert" hidden></p>
+    </section>
+
+    <header class="hud" id="hud" hidden>
+      <div class="status-row">
+        <span id="status" class="pill">Set up</span>
+        <span id="fps" class="fps"></span>
+      </div>
+      <div class="last">
+        <span class="label">Last lap</span>
+        <span id="lastLap" class="big">--.-</span>
+        <span id="lapInfo" class="sub"></span>
+      </div>
+    </header>
+
+    <footer class="panel" id="panel" hidden>
+      <ol id="laps" class="laps" aria-label="Lap times"></ol>
+      <div class="actions">
+        <button id="startBtn" class="btn primary" type="button">Start timing</button>
+        <button id="undoBtn" class="btn" type="button" disabled>Undo lap</button>
+        <button id="settingsBtn" class="btn" type="button" aria-expanded="false" aria-controls="settings">Settings</button>
+      </div>
+    </footer>
+
+    <dialog id="settings" class="settings">
+      <form method="dialog">
+        <h2>Settings</h2>
+        <label class="field">
+          <span>Ignore the line after each lap</span>
+          <span class="inline"><input id="ignoreSec" type="number" min="3" max="60" step="1" inputmode="numeric"> seconds</span>
+          <small>Long enough to skip the team behind, shorter than your fastest lap.</small>
+        </label>
+        <label class="field">
+          <span>Decimals</span>
+          <select id="decimals"><option value="1">One (17.4)</option><option value="2">Two (17.43)</option></select>
+        </label>
+        <label class="field">
+          <span>Voice</span>
+          <select id="voice">
+            <option value="auto">Automatic</option>
+            <option value="phone">Phone voice</option>
+            <option value="clips">Recorded clips</option>
+          </select>
+          <small>Use recorded clips if you hear nothing inside Telegram.</small>
+        </label>
+        <div class="row">
+          <button id="testVoiceBtn" class="btn" type="button">Test voice</button>
+          <button id="resetMarkersBtn" class="btn" type="button">Reset markers</button>
+        </div>
+        <div class="row">
+          <button id="copyBtn" class="btn" type="button">Copy lap times</button>
+          <button id="clearBtn" class="btn danger" type="button">Clear laps</button>
+        </div>
+        <p id="copyNote" class="note" hidden></p>
+        <button class="btn primary" value="close">Done</button>
+      </form>
+    </dialog>
+  </main>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
