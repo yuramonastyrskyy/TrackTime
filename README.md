@@ -20,6 +20,22 @@ Tips:
 - **Settings → Copy lap times** copies the session, ready to paste into a chat.
 - If you hear nothing inside Telegram, set **Voice** to **Recorded clips**.
 
+## Record + log (for testing and tuning)
+
+**Record + time** does everything **Start timing** does, and also films the line and keeps a log, so a session can be replayed and tuned at home.
+
+- The video is saved in 10-minute parts (about 190 MB each), straight into the browser's storage as it records. If the page crashes, what was recorded so far is kept.
+- **Mark**: tap it whenever the lead rider really crosses the line. The marks are the "true" crossings the detector is compared against.
+- **Stop recording** opens **Recordings**: save or share each video part, and the log (JSON), an events table (CSV) and a setup photo with the markers. Recordings stay in the app (Settings → Recordings) until you delete them.
+- Settings → **Record sound with the video** also records the microphone (handy for the coach's calls). On iPhone this can make the Bluetooth speaker quieter, so try it before relying on it.
+- The log has every crossing the detector saw (counted, ignored by the 14-second rule), every lap, mark, undo, the markers and settings, and once a second the frame rate and how covered the line was. Times are given both from the start of the session and as the time inside each video part.
+
+Replaying a recording with the same markers and settings:
+
+```sh
+node test/run-clip.mjs tracktime-2026-11-14_0812-part1.mp4 --log tracktime-2026-11-14_0812-log.json
+```
+
 ## Hosting on GitHub Pages
 
 In the repository on GitHub: **Settings → Pages → Build and deployment**, set **Source** to "Deploy from a branch", choose `main` and `/ (root)`, then **Save**. After a minute the app is live at `https://<your-user>.github.io/TrackTime/`.
@@ -36,6 +52,7 @@ Code:
 - `js/detector.js`: line sampling, crossing detection and lap logic (no browser APIs, tested in Node).
 - `js/speech.js`: announcements, using the phone's voice or the recorded clips in `audio/en/`.
 - `js/app.js`: camera, markers, screens and settings.
+- `js/recorder.js`: Record + log mode (video parts, IndexedDB storage, log and CSV, sharing).
 - `sw.js`, `manifest.webmanifest`: offline use and "Add to Home Screen".
 
 The clips in `audio/en/` are generated with espeak-ng. You can replace any of them with your own recordings (for example the coach's voice) as long as the file names stay the same.

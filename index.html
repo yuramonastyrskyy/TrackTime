@@ -36,6 +36,7 @@
       <div class="status-row">
         <span id="status" class="pill">Set up</span>
         <span id="fps" class="fps"></span>
+        <span id="recInfo" class="rec" hidden></span>
       </div>
       <div class="last">
         <span class="label">Last lap</span>
@@ -48,6 +49,8 @@
       <ol id="laps" class="laps" aria-label="Lap times"></ol>
       <div class="actions">
         <button id="startBtn" class="btn primary" type="button">Start timing</button>
+        <button id="recBtn" class="btn recbtn" type="button">Record + time</button>
+        <button id="markBtn" class="btn mark" type="button" hidden>Mark</button>
         <button id="undoBtn" class="btn" type="button" disabled>Undo lap</button>
         <button id="settingsBtn" class="btn" type="button" aria-expanded="false" aria-controls="settings">Settings</button>
       </div>
@@ -74,6 +77,12 @@
           </select>
           <small>Use recorded clips if you hear nothing inside Telegram.</small>
         </label>
+        <label class="field check">
+          <input id="recordSound" type="checkbox">
+          <span>Record sound with the video</span>
+        </label>
+        <small class="hint">Catches the coach calling times. On iPhone it can make the Bluetooth speaker quieter, so try it first.</small>
+        <button id="recordingsBtn" class="btn" type="button">Recordings</button>
         <div class="row">
           <button id="testVoiceBtn" class="btn" type="button">Test voice</button>
           <button id="resetMarkersBtn" class="btn" type="button">Reset markers</button>
@@ -83,6 +92,15 @@
           <button id="clearBtn" class="btn danger" type="button">Clear laps</button>
         </div>
         <p id="copyNote" class="note" hidden></p>
+        <button class="btn primary" value="close">Done</button>
+      </form>
+    </dialog>
+    <dialog id="recordings" class="settings">
+      <form method="dialog">
+        <h2>Recordings</h2>
+        <p class="hint">Save each video part and the log to the phone or share them. Recordings stay in the app until you delete them.</p>
+        <div id="recList" class="reclist"></div>
+        <p id="recStorage" class="hint"></p>
         <button class="btn primary" value="close">Done</button>
       </form>
     </dialog>

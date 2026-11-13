@@ -86,7 +86,25 @@ video { background: #000; }
 }
 .laps li small { color: var(--muted); font-weight: 400; margin-right: 6px; }
 .laps li.best { outline: 2px solid var(--good); }
-.actions { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.actions .wide { grid-column: span 2; }
+.btn.recbtn { color: var(--red); border-color: var(--red); }
+.btn.recbtn::before, .rec::before { content: ""; display: inline-block; width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--red); margin-right: 0.45em; vertical-align: 0.05em; }
+.btn.mark { background: var(--timber); border-color: var(--timber); color: #1a1205; font-size: 1.15rem; }
+.btn.mark.flash { background: var(--text); border-color: var(--text); }
+.rec { font: 600 0.8rem var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+.check { display: flex; align-items: center; gap: 10px; }
+.settings input[type="checkbox"] { width: 22px; min-height: 22px; height: 22px; accent-color: var(--red); }
+.hint { color: var(--muted); margin: -8px 0 0; font-size: 0.85rem; }
+.settings form > p.hint, .settings form > #recStorage { margin: 0; }
+.settings { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.reclist { display: grid; gap: 12px; }
+.recitem { border: 1px solid var(--surface-2); border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+.recitem h3 { margin: 0; font-size: 1rem; }
+.recitem .meta { color: var(--muted); font-size: 0.85rem; margin: 0; }
+.recitem .files { display: grid; gap: 6px; }
+.recitem .btn { min-height: 44px; text-align: left; }
+.recitem .warn { color: var(--timber); margin: 0; font-size: 0.85rem; }
 
 .btn {
   font: 600 1rem var(--font);
