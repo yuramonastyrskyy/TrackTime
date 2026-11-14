@@ -1,5 +1,5 @@
 // Offline cache: the app works at the velodrome without internet after one visit.
-const VERSION = 'tracktime-v2';
+const VERSION = 'tracktime-v3';
 const CLIPS = [...Array(100).keys()].map((n) => `audio/en/${n}.m4a`).concat(['point', 'minute', 'start'].map((w) => `audio/en/${w}.m4a`));
 const SHELL = ['./', 'index.html', 'styles.css', 'js/app.js', 'js/detector.js', 'js/speech.js', 'js/recorder.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...CLIPS];
 
