@@ -29,8 +29,14 @@ export const DEFAULT_TUNING = {
   rowFraction: 0.5,      // share of a row's samples that must be covered
   trackTrigger: 0.08,    // share of track rows covered to call it a crossing
   apronClear: 0.05,      // apron must stay below this share to count
-  apronLookbackFrames: 15,
-  lookaheadFrames: 3,
+  apronLookbackMs: 250,  // apron must have been clear this long before a crossing...
+  lookaheadMs: 50,       // ...and this long after it (time-based, so it works at any frame rate)
+  groupMinCoverMs: 360,  // a team keeps the line covered at least this long in total... (0 = count anyone)
+  groupWindowMs: 1500,   // ...within this long after its first wheel. One rider: ~0.1-0.33 s.
+  groupLevel: 0.03,      // share of track rows that counts as "covered" for the team check
+                         // (low, so small riders high up on the track still count)
+  stuckMs: 4000,         // line "covered" this long without a break = the picture changed; relearn
+  stuckFrames: 9,        // recent frames whose median becomes the new empty-line image
   passGapMs: 333,        // a new pass needs this much quiet time on the line
   learnFrames: 45,       // frames used to learn the empty line
   bgAlpha: 0.02,         // how fast the empty-line image adapts to light changes
@@ -112,8 +118,15 @@ export class LineDetector {
     this.t = tuning;
     this.bg = null;
     this.learn = [];
-    this.history = []; // {time, track, apron}
+    this.history = []; // {time, track, apron}, oldest first
+    this.cand = 0;     // index in history of the next frame to judge
     this.lastOkTime = -Infinity;
+    this.busySince = null; // when the line last went from clear to covered
+    this.recent = [];      // last few raw sample frames, for relearning
+    this.relearns = 0;     // how many times the empty-line image was rebuilt
+    this.prevTime = null;
+    this.pending = null;   // first crossing of a possible team, waiting for the rest
+    this.singles = [];     // times of crossings dropped as single riders (for the log)
     this.covered = new Uint8Array(sampler.sampleCount);
     this.rowHits = new Uint16Array(sampler.rowCount);
     this.rowSize = new Uint16Array(sampler.rowCount);
@@ -162,25 +175,89 @@ export class LineDetector {
     const apron = this.apronRows ? apronCov / this.apronRows : 0;
     this.level = { track, apron };
 
-    // Slowly adapt the empty-line image where nothing is covering it.
-    if (track < t.trackTrigger && apron < t.apronClear) {
+    const busy = track >= t.trackTrigger || apron >= t.apronClear;
+    if (!busy) {
+      // Slowly adapt the empty-line image where nothing is covering it.
       const a = t.bgAlpha;
       for (let i = 0; i < n; i++) if (!this.covered[i]) bg[i] += a * (samples[i] - offset - bg[i]);
+      this.busySince = null;
+    } else if (this.busySince === null) {
+      this.busySince = time;
+    }
+    this.recent.push(Uint8Array.from(samples));
+    if (this.recent.length > t.stuckFrames) this.recent.shift();
+
+    // Riders pass in well under a second. If the line has looked covered for
+    // several seconds, the camera moved or the exposure jumped: the old image
+    // of the empty line is wrong and would block every crossing from now on.
+    if (this.busySince !== null && time - this.busySince >= t.stuckMs) {
+      this._rebuildBackground();
+      return null;
     }
 
     const h = this.history;
-    h.push({ time, track, apron });
-    const keep = t.apronLookbackFrames + t.lookaheadFrames + 1;
-    if (h.length > keep) h.shift();
-    if (h.length < keep) return null;
+    // How long this frame stands for, counted only while something is on the track.
+    const frameMs = this.prevTime === null ? 0 : Math.min(time - this.prevTime, 100);
+    this.prevTime = time;
+    const cov = track > t.groupLevel ? frameMs : 0;
+    h.push({ time, track, apron, cov });
+    let hit = null;
 
-    const c = h.length - 1 - t.lookaheadFrames; // candidate frame
-    const cand = h[c];
+    // A team is several riders in a line: together they keep the line covered
+    // for about half a second. A lone rider, or someone walking past the
+    // camera, covers it for well under 0.3 s. Wait until it is clearly a team.
+    if (this.pending) {
+      this.pending.covered += cov;
+      if (this.pending.covered >= t.groupMinCoverMs) { hit = this.pending.time; this.pending = null; }
+      else if (time - this.pending.time > t.groupWindowMs) { this.singles.push(this.pending.time); this.pending = null; }
+    }
+
+    while (this.cand < h.length && time - h[this.cand].time >= t.lookaheadMs) {
+      const r = this._judge(this.cand);
+      if (r !== null && hit === null && !this.pending) {
+        let covered = 0;
+        for (let i = this.cand; i < h.length; i++) covered += h[i].cov;
+        if (covered >= t.groupMinCoverMs) hit = r;
+        else this.pending = { time: r, covered };
+      }
+      this.cand++;
+    }
+    // Drop frames that no future candidate can look back to (keep one frame
+    // at or before the look-back edge, so _judge knows the history is long enough).
+    const oldest = this.cand < h.length ? h[this.cand].time : time;
+    let drop = 0;
+    while (drop + 1 < this.cand && h[drop + 1].time <= oldest - t.apronLookbackMs) drop++;
+    if (drop) { h.splice(0, drop); this.cand -= drop; }
+    return hit;
+  }
+
+  _judge(c) {
+    const t = this.t, h = this.history, cand = h[c];
     if (cand.track <= t.trackTrigger) return null;
-    for (let i = 0; i < h.length; i++) if (h[i].apron >= t.apronClear) return null;
+    if (cand.time - h[0].time < t.apronLookbackMs) return null; // not enough history yet
+    for (let i = 0; i < h.length; i++) {
+      const dt = h[i].time - cand.time;
+      if (dt < -t.apronLookbackMs || dt > t.lookaheadMs) continue;
+      if (h[i].apron >= t.apronClear) return null;
+    }
     const isNewPass = cand.time - this.lastOkTime > t.passGapMs;
     this.lastOkTime = cand.time;
     return isNewPass ? cand.time : null;
+  }
+
+  _rebuildBackground() {
+    const frames = this.recent, n = frames[0].length, m = frames.length;
+    const col = new Uint8Array(m);
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < m; k++) col[k] = frames[k][i];
+      col.sort();
+      this.bg[i] = col[m >> 1];
+    }
+    this.busySince = null;
+    this.history = [];
+    this.cand = 0;
+    this.pending = null;
+    this.relearns++;
   }
 
   _finishLearning() {

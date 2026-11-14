@@ -15,14 +15,14 @@ const els = {
   ignoreSec: $('ignoreSec'), decimals: $('decimals'), voice: $('voice'),
   testVoiceBtn: $('testVoiceBtn'), resetMarkersBtn: $('resetMarkersBtn'),
   copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'),
-  recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'),
+  recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   recordingsBtn: $('recordingsBtn'), recordings: $('recordings'), recList: $('recList'), recStorage: $('recStorage'),
 };
 
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
@@ -143,12 +143,22 @@ function onFrame(now, meta) {
   }
   if (detector && els.video.videoWidth) {
     const t = frameTime(now, meta);
-    procCtx.drawImage(els.video, 0, 0, proc.width, proc.height);
+    // Only the thin strip around the finish line is copied out of the video:
+    // reading back the whole frame is what limits the frame rate on phones.
     const { x, y, w, h } = sampler.box;
-    const img = procCtx.getImageData(x, y, w, h);
+    procCtx.drawImage(els.video, x / proc.scale, y / proc.scale, w / proc.scale, h / proc.scale, 0, 0, w, h);
+    const img = procCtx.getImageData(0, 0, w, h);
     readSamplesRGBA(sampler, img.data, samples);
+    const relearnsBefore = detector.relearns, singlesBefore = detector.singles.length;
     const hit = detector.push(samples, t);
     lastFrameT = t;
+    if (detector.relearns !== relearnsBefore) {
+      recorder?.log('relearn', { frameT: t, detail: 'line looked covered for 4 s; re-learned the empty line' });
+    }
+    if (detector.singles.length !== singlesBefore) {
+      recorder?.log('single', { frameT: detector.singles[detector.singles.length - 1], detail: 'one rider or passer-by, not a team: ignored' });
+      if (detector.singles.length > 50) detector.singles.splice(0, 25);
+    }
     if (recorder && detector && !detector.learning) {
       sec.frames++;
       sec.track = Math.max(sec.track, detector.level.track);
@@ -164,13 +174,15 @@ function onFrame(now, meta) {
 function prepareDetector({ keepClock = false } = {}) {
   const vw = els.video.videoWidth, vh = els.video.videoHeight;
   const s = 960 / Math.max(vw, vh);
-  proc = document.createElement('canvas');
-  proc.width = Math.round(vw * s);
-  proc.height = Math.round(vh * s);
-  procCtx = proc.getContext('2d', { willReadFrequently: true });
+  // Samples are placed on a virtual frame scaled to 960 px on the long side.
+  proc = { width: Math.round(vw * s), height: Math.round(vh * s), scale: s };
   sampler = buildSampler(proc.width, proc.height, settings.line);
+  const canvas = document.createElement('canvas');
+  canvas.width = sampler.box.w;
+  canvas.height = sampler.box.h;
+  procCtx = canvas.getContext('2d', { willReadFrequently: true });
   samples = new Uint8Array(sampler.sampleCount);
-  detector = new LineDetector(sampler);
+  detector = new LineDetector(sampler, detectorTuning());
   if (!keepClock) timeSource = null;
   recorder?.log('detector', { detail: `${proc.width}x${proc.height}, ${sampler.sampleCount} samples, ${sampler.rowCount} rows` });
 }
@@ -339,12 +351,18 @@ els.overlay.addEventListener('pointerup', endDrag);
 els.overlay.addEventListener('pointercancel', endDrag);
 window.addEventListener('resize', drawOverlay);
 
+function detectorTuning() {
+  // "Count single riders" turns off the team check (for solo efforts).
+  return settings.countSingles ? { ...DEFAULT_TUNING, groupMinCoverMs: 0 } : DEFAULT_TUNING;
+}
+
 // ---------- settings dialog ----------
 function fillSettings() {
   els.ignoreSec.value = settings.ignoreSec;
   els.decimals.value = String(settings.decimals);
   els.voice.value = settings.voice;
   els.recordSound.checked = !!settings.recordSound;
+  els.countSingles.checked = !!settings.countSingles;
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -427,6 +445,11 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 
 // ---------- record + log ----------
 els.recordSound.addEventListener('change', () => { settings.recordSound = els.recordSound.checked; save(); });
+els.countSingles.addEventListener('change', () => {
+  settings.countSingles = els.countSingles.checked;
+  save();
+  if (detector) detector.t = detectorTuning();
+});
 
 els.recBtn.addEventListener('click', async () => {
   if (!stream || !els.video.videoWidth || recorder) return;
@@ -451,7 +474,7 @@ els.recBtn.addEventListener('click', async () => {
     recorder = new SessionRecorder(new MediaStream(tracks), {
       settings: { ignoreSec: settings.ignoreSec, decimals: settings.decimals, voice: settings.voice, recordSound: !!micTrack },
       line: settings.line,
-      tuning: DEFAULT_TUNING,
+      tuning: detectorTuning(),
       camera: safe(() => vt.getSettings()),
       cameraLabel: vt.label,
       video: { width: els.video.videoWidth, height: els.video.videoHeight },
