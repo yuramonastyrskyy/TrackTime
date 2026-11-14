@@ -2,6 +2,7 @@ import {
   DEFAULT_LINE, DEFAULT_TUNING, buildSampler, readSamplesRGBA, LineDetector, LapCounter, formatLap,
 } from './detector.js';
 import { Announcer } from './speech.js';
+import { GLSampler } from './glsampler.js';
 import {
   SessionRecorder, sessionFiles, shareOrDownload, store, formatBytes,
 } from './recorder.js';
@@ -38,7 +39,7 @@ const counter = new LapCounter(settings.ignoreSec * 1000);
 let state = 'off';           // off | setup | learning | armed | timing
 let stream = null;
 let detector = null, sampler = null, samples = null;
-let proc = null, procCtx = null;
+let proc = null, procCtx = null, glSampler = null, readerNote = '';
 let timeSource = null;
 let wakeLock = null;
 let fpsFrames = 0, fpsSince = performance.now();
@@ -77,8 +78,10 @@ async function startCamera() {
       audio: false,
       video: {
         facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 }, height: { ideal: 1080 },
-        frameRate: { ideal: 60 },
+        // 720p at 30 fps: plenty for the detector (it works at 960 px) and much
+        // lighter for the phone than 1080p/60 while it is also recording.
+        width: { ideal: 1280 }, height: { ideal: 720 },
+        frameRate: { ideal: 30 },
       },
     });
   } catch (err) {
@@ -130,7 +133,7 @@ function onFrame(now, meta) {
   fpsFrames++;
   if (now - fpsSince > 1000) {
     const fps = Math.round((fpsFrames * 1000) / (now - fpsSince));
-    els.fps.textContent = `${fps} fps`;
+    els.fps.textContent = `${fps} fps${glSampler && !readTimes ? ' · gpu' : ''}`;
     fpsFrames = 0; fpsSince = now;
     if (recorder) {
       recorder.log('second', {
@@ -143,12 +146,7 @@ function onFrame(now, meta) {
   }
   if (detector && els.video.videoWidth) {
     const t = frameTime(now, meta);
-    // Only the thin strip around the finish line is copied out of the video:
-    // reading back the whole frame is what limits the frame rate on phones.
-    const { x, y, w, h } = sampler.box;
-    procCtx.drawImage(els.video, x / proc.scale, y / proc.scale, w / proc.scale, h / proc.scale, 0, 0, w, h);
-    const img = procCtx.getImageData(0, 0, w, h);
-    readSamplesRGBA(sampler, img.data, samples);
+    readFrame();
     const relearnsBefore = detector.relearns, singlesBefore = detector.singles.length;
     const hit = detector.push(samples, t);
     lastFrameT = t;
@@ -171,6 +169,46 @@ function onFrame(now, meta) {
   scheduleFrame();
 }
 
+// Reading pixels out of the video is the slow part of each frame. The GPU path
+// reads back only the sample pixels; the canvas path copies a strip of the
+// frame. Which is faster depends on the phone, so for the first frames both are
+// timed (alternating) and the faster one is kept. Both give the same values.
+const CALIBRATE_FRAMES = 40;
+let readTimes = null; // { gpu: [], canvas: [] } while calibrating
+
+function readCanvas() {
+  const { x, y, w, h } = sampler.box;
+  procCtx.drawImage(els.video, x / proc.scale, y / proc.scale, w / proc.scale, h / proc.scale, 0, 0, w, h);
+  const img = procCtx.getImageData(0, 0, w, h);
+  readSamplesRGBA(sampler, img.data, samples);
+}
+
+function readFrame() {
+  if (!glSampler) { readCanvas(); return; }
+  const useGpu = !readTimes || readTimes.gpu.length <= readTimes.canvas.length;
+  const t0 = performance.now();
+  if (useGpu) {
+    try { glSampler.read(els.video, samples); } catch (err) {
+      glSampler = null; readTimes = null;
+      recorder?.log('detector', { detail: `GPU sampling failed (${err?.message || err}); using canvas` });
+      readCanvas();
+      return;
+    }
+  } else {
+    readCanvas();
+  }
+  if (!readTimes) return;
+  readTimes[useGpu ? 'gpu' : 'canvas'].push(performance.now() - t0);
+  if (readTimes.gpu.length + readTimes.canvas.length >= CALIBRATE_FRAMES) {
+    const med = (a) => [...a].sort((p, q) => p - q)[a.length >> 1];
+    const g = med(readTimes.gpu), c = med(readTimes.canvas);
+    if (c < g) glSampler = null;
+    readTimes = null;
+    readerNote = `pixel read: gpu ${g.toFixed(1)} ms, canvas ${c.toFixed(1)} ms -> ${c < g ? 'canvas' : 'gpu'}`;
+    recorder?.log('detector', { detail: readerNote });
+  }
+}
+
 function prepareDetector({ keepClock = false } = {}) {
   const vw = els.video.videoWidth, vh = els.video.videoHeight;
   const s = 960 / Math.max(vw, vh);
@@ -181,10 +219,17 @@ function prepareDetector({ keepClock = false } = {}) {
   canvas.width = sampler.box.w;
   canvas.height = sampler.box.h;
   procCtx = canvas.getContext('2d', { willReadFrequently: true });
+  glSampler = null;
+  readTimes = null;
+  const forced = new URLSearchParams(location.search).get('sampler'); // 'canvas' or 'gpu' for testing
+  if (forced !== 'canvas') {
+    try { glSampler = new GLSampler(sampler); } catch { glSampler = null; }
+    if (glSampler && forced !== 'gpu') readTimes = { gpu: [], canvas: [] };
+  }
   samples = new Uint8Array(sampler.sampleCount);
   detector = new LineDetector(sampler, detectorTuning());
   if (!keepClock) timeSource = null;
-  recorder?.log('detector', { detail: `${proc.width}x${proc.height}, ${sampler.sampleCount} samples, ${sampler.rowCount} rows` });
+  recorder?.log('detector', { detail: `${proc.width}x${proc.height}, ${sampler.sampleCount} samples, ${sampler.rowCount} rows, ${glSampler ? 'gpu' : 'canvas'}, camera ${vw}x${vh}` });
 }
 
 // ---------- timing ----------
