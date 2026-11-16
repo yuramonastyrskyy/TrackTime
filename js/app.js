@@ -1,5 +1,6 @@
 import {
   DEFAULT_LINE, DEFAULT_TUNING, buildSampler, readSamplesRGBA, LineDetector, LapCounter, formatLap,
+  inRestWindow, RESUME_EARLY_MS,
 } from './detector.js';
 import { Announcer } from './speech.js';
 import { GLSampler } from './glsampler.js';
@@ -19,6 +20,7 @@ const els = {
   copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'),
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkPill: $('linkPill'),
+  restBetweenLaps: $('restBetweenLaps'),
   recordingsBtn: $('recordingsBtn'), recordings: $('recordings'), recList: $('recList'), recStorage: $('recStorage'),
 };
 
@@ -73,6 +75,7 @@ function frameEpoch(t) {
   mediaEpoch ??= Date.now() - lastFrameT;
   return mediaEpoch + t;
 }
+let resting = false;         // true while frames are skipped inside the ignore window
 
 const STATUS_TEXT = {
   setup: 'Set up', learning: 'Keep the line clear', armed: 'Waiting for first rider', timing: 'Timing',
@@ -159,12 +162,12 @@ function onFrame(now, meta) {
   fpsFrames++;
   if (now - fpsSince > 1000) {
     const fps = Math.round((fpsFrames * 1000) / (now - fpsSince));
-    els.fps.textContent = `${fps} fps${glSampler && !readTimes ? ' · gpu' : ''}`;
+    els.fps.textContent = resting ? `${fps} fps · rest` : `${fps} fps${glSampler && !readTimes ? ' · gpu' : ''}`;
     fpsFrames = 0; fpsSince = now;
     if (recorder) {
       recorder.log('second', {
         fps, detFrames: sec.frames, track: +sec.track.toFixed(3), apron: +sec.apron.toFixed(3),
-        learning: !!detector?.learning,
+        learning: !!detector?.learning, ...(resting ? { resting: true } : {}),
       });
       sec = { frames: 0, track: 0, apron: 0 };
       showRecInfo();
@@ -172,6 +175,24 @@ function onFrame(now, meta) {
   }
   if (detector && els.video.videoWidth) {
     const t = frameTime(now, meta);
+    if (shouldRest(t)) {
+      // Inside the ignore window nothing can count, so skip the pixel reading
+      // and detection (the heavy part) to keep the phone cooler. The camera
+      // and any recording keep running.
+      if (!resting) {
+        resting = true;
+        detector.skipGap();
+        recorder?.log('rest', { frameT: Math.round(t), detail: `detection paused until ${(RESUME_EARLY_MS / 1000).toFixed(1)} s before the window ends` });
+        drawOverlay();
+      }
+      lastFrameT = t;
+      scheduleFrame();
+      return;
+    }
+    if (resting) {
+      resting = false;
+      recorder?.log('resume', { frameT: Math.round(t) });
+    }
     readFrame();
     const relearnsBefore = detector.relearns, singlesBefore = detector.singles.length;
     const hit = detector.push(samples, t);
@@ -193,6 +214,15 @@ function onFrame(now, meta) {
   }
   drawOverlay();
   scheduleFrame();
+}
+
+// "Rest between laps": skip detection inside the ignore window (see
+// inRestWindow). Worked out from the lap clock on every frame, so Undo, Clear
+// and a changed ignore time take effect at once.
+function shouldRest(t) {
+  if (settings.restBetweenLaps === false) return false;
+  if (state !== 'timing' || detector.learning) return false;
+  return inRestWindow(counter, t);
 }
 
 // Reading pixels out of the video is the slow part of each frame. The GPU path
@@ -438,6 +468,7 @@ function fillSettings() {
   els.recordSound.checked = !!settings.recordSound;
   els.countSingles.checked = !!settings.countSingles;
   els.stopwatchCode.value = settings.stopwatchCode;
+  els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -526,6 +557,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 
 // ---------- record + log ----------
 els.recordSound.addEventListener('change', () => { settings.recordSound = els.recordSound.checked; save(); });
+els.restBetweenLaps.addEventListener('change', () => { settings.restBetweenLaps = els.restBetweenLaps.checked; save(); });
 els.countSingles.addEventListener('change', () => {
   settings.countSingles = els.countSingles.checked;
   save();
@@ -553,7 +585,7 @@ els.recBtn.addEventListener('click', async () => {
     }
     const vt = stream.getVideoTracks()[0];
     recorder = new SessionRecorder(new MediaStream(tracks), {
-      settings: { ignoreSec: settings.ignoreSec, decimals: settings.decimals, voice: settings.voice, recordSound: !!micTrack },
+      settings: { ignoreSec: settings.ignoreSec, decimals: settings.decimals, voice: settings.voice, recordSound: !!micTrack, restBetweenLaps: settings.restBetweenLaps !== false },
       line: settings.line,
       tuning: detectorTuning(),
       camera: safe(() => vt.getSettings()),

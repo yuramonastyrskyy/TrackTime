@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { LapCounter, formatLap, buildSampler, LineDetector, DEFAULT_TUNING } from '../js/detector.js';
+import { LapCounter, formatLap, buildSampler, LineDetector, DEFAULT_TUNING, inRestWindow } from '../js/detector.js';
 import { runClip } from './run-clip.mjs';
 
 test('first crossing starts, then laps, with the following team ignored', () => {
@@ -126,5 +126,34 @@ test('a lone rider is ignored, a team is counted at its first wheel', () => {
     const team = t;
     const h2 = run(3000, (x) => frame(s, 200, { trackRows: (x - team) % 250 < 150 && x - team < 1000 ? 300 : 0 }));
     assert.ok(h2 !== null && Math.abs(h2 - team) < step + 1, `${fps} fps: team at ${h2} vs ${team}`);
+  }
+});
+
+test('resting between laps: skipped frames give the same laps, no false relearn', () => {
+  const s = buildSampler(540, 960);
+  const fps = 30, step = 1000 / fps;
+  // Teams cross every 17 s; the following team 3 s later; someone stands on the
+  // line for a moment just as detection resumes.
+  const teams = [3000, 20000, 37000, 54000];
+  const covered = (x) => teams.some((at) => [at, at + 3000].some((a) => x >= a && x - a < 1000 && (x - a) % 250 < 150))
+    || teams.some((at) => x >= at + 12450 && x < at + 12700);
+  for (const rest of [false, true]) {
+    const det = new LineDetector(s);
+    const laps = new LapCounter(14000);
+    const out = [];
+    let skipped = 0, resting = false;
+    for (let t = 0; t < 60000; t += step) {
+      if (rest && !det.learning && inRestWindow(laps, t)) {
+        if (!resting) { resting = true; det.skipGap(); }
+        skipped++;
+        continue;
+      }
+      resting = false;
+      const hit = det.push(frame(s, 200, { trackRows: covered(t) ? 300 : 0 }), t);
+      if (hit !== null) out.push(laps.crossing(hit).type);
+    }
+    assert.equal(det.relearns, 0, `rest=${rest}`);
+    assert.deepEqual(laps.laps.map((l) => Math.round(l.ms / 100)), [170, 170, 170], `rest=${rest}`);
+    if (rest) assert.ok(skipped > 0.6 * (60000 / step), `skipped ${skipped}`);
   }
 });

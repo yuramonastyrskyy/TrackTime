@@ -245,6 +245,22 @@ export class LineDetector {
     return isNewPass ? cand.time : null;
   }
 
+  /**
+   * Call when frames are skipped on purpose (the app rests between laps).
+   * Forgets everything that assumes frames arrive back to back, so the jump in
+   * time is not taken for a stuck line and old frames are not judged again.
+   * The learned empty-line image is kept.
+   */
+  skipGap() {
+    this.history = [];
+    this.cand = 0;
+    this.pending = null;
+    this.busySince = null;
+    this.prevTime = null;
+    this.recent = [];
+    this.level = { track: 0, apron: 0 };
+  }
+
   _rebuildBackground() {
     const frames = this.recent, n = frames[0].length, m = frames.length;
     const col = new Uint8Array(m);
@@ -322,6 +338,18 @@ export class LapCounter {
     this.lastTime = last.at - last.ms;
     return last;
   }
+}
+
+/**
+ * True while the line is inside the ignore window after a counted crossing and
+ * more than `resumeEarlyMs` from its end. Nothing seen then can count, so the
+ * app skips detection to save power. Resuming early gives the detector fresh
+ * frames (it looks 0.25 s back) before a lap can count again.
+ */
+export const RESUME_EARLY_MS = 1500;
+export function inRestWindow(counter, time, resumeEarlyMs = RESUME_EARLY_MS) {
+  if (counter.lastTime === null) return false;
+  return time >= counter.lastTime && time < counter.lastTime + counter.ignoreMs - resumeEarlyMs;
 }
 
 /** "17.4" style text for a lap in milliseconds. */

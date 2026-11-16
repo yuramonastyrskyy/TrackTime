@@ -16,6 +16,7 @@ It runs in the phone's browser on iPhone and Android, works offline after the fi
 
 Tips:
 - Keep the phone plugged into a power bank. The app keeps the screen on while timing.
+- **Settings → Rest between laps** (on by default): after each lap the app stops analysing the line until 1.5 s before the ignore time ends, which saves most of the detection work and keeps the phone cooler. The camera and any recording keep running, so nothing has to restart. Turn it off if you want every crossing in the log, including the team behind.
 - If a lap was wrong (for example someone stepped onto the line), tap **Undo lap**.
 - **Settings → Copy lap times** copies the session, ready to paste into a chat.
 - If you hear nothing inside Telegram, set **Voice** to **Recorded clips**.
