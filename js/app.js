@@ -6,6 +6,7 @@ import { GLSampler } from './glsampler.js';
 import {
   SessionRecorder, sessionFiles, shareOrDownload, store, formatBytes,
 } from './recorder.js';
+import { LapSender, linkOverrides, normalizeCode } from './lapLink.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -17,13 +18,14 @@ const els = {
   testVoiceBtn: $('testVoiceBtn'), resetMarkersBtn: $('resetMarkersBtn'),
   copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'),
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
+  stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkPill: $('linkPill'),
   recordingsBtn: $('recordingsBtn'), recordings: $('recordings'), recList: $('recList'), recStorage: $('recStorage'),
 };
 
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
@@ -47,6 +49,30 @@ let recorder = null;         // SessionRecorder while "Record + time" is running
 let micTrack = null;
 let lastFrameT = 0;          // detection clock of the newest frame
 let sec = { frames: 0, track: 0, apron: 0 }; // per-second stats for the log
+let mediaEpoch = null;       // wall-clock anchor when frame times come from mediaTime
+
+// ---------- laptop stopwatch link ----------
+const lapLink = new LapSender({ ...linkOverrides(location.search), onState: renderLink });
+lapLink.setCode(settings.stopwatchCode);
+function renderLink(s) {
+  els.linkPill.hidden = !s.code;
+  els.linkPill.textContent = s.connected ? '· stopwatch' : '· stopwatch …';
+  if (!s.code) { els.linkStatus.textContent = ''; return; }
+  const up = s.links.filter((l) => l.status === 'open').length;
+  let text = s.connected ? `Connected (${up} of ${s.links.length} relays).` : 'Connecting…';
+  if (s.lastSent) {
+    const when = new Date(s.lastSent.at).toLocaleTimeString();
+    text += ` Last sent: ${s.lastSent.lap ? `lap ${s.lastSent.lap}` : 'first crossing'} at ${when}.`;
+  }
+  els.linkStatus.textContent = text;
+}
+/** Wall-clock time (epoch ms) of a frame time from the detector clock. */
+function frameEpoch(t) {
+  // captureTime and rVFC/rAF "now" share the performance.now() timeline.
+  if (timeSource !== 'media') return performance.timeOrigin + t;
+  mediaEpoch ??= Date.now() - lastFrameT;
+  return mediaEpoch + t;
+}
 
 const STATUS_TEXT = {
   setup: 'Set up', learning: 'Keep the line clear', armed: 'Waiting for first rider', timing: 'Timing',
@@ -228,7 +254,7 @@ function prepareDetector({ keepClock = false } = {}) {
   }
   samples = new Uint8Array(sampler.sampleCount);
   detector = new LineDetector(sampler, detectorTuning());
-  if (!keepClock) timeSource = null;
+  if (!keepClock) { timeSource = null; mediaEpoch = null; }
   recorder?.log('detector', { detail: `${proc.width}x${proc.height}, ${sampler.sampleCount} samples, ${sampler.rowCount} rows, ${glSampler ? 'gpu' : 'canvas'}, camera ${vw}x${vh}` });
 }
 
@@ -266,6 +292,9 @@ function onCrossing(t) {
     if (r.type === 'lap') Object.assign(fields, { lap: r.lap, lapMs: Math.round(r.ms) });
     if (r.type === 'ignored') fields.sinceMs = Math.round(r.since);
     recorder.log(r.type, fields);
+  }
+  if (r.type === 'start' || r.type === 'lap') {
+    lapLink.sendCrossing(frameEpoch(t), r.type === 'start' ? 0 : r.lap);
   }
   if (r.type === 'start') {
     setState('timing');
@@ -408,6 +437,7 @@ function fillSettings() {
   els.voice.value = settings.voice;
   els.recordSound.checked = !!settings.recordSound;
   els.countSingles.checked = !!settings.countSingles;
+  els.stopwatchCode.value = settings.stopwatchCode;
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -421,6 +451,12 @@ els.ignoreSec.addEventListener('change', () => {
   settings.ignoreSec = Number.isFinite(v) ? Math.min(60, Math.max(3, v)) : 14;
   els.ignoreSec.value = settings.ignoreSec;
   counter.ignoreMs = settings.ignoreSec * 1000;
+  save();
+});
+els.stopwatchCode.addEventListener('change', () => {
+  settings.stopwatchCode = normalizeCode(els.stopwatchCode.value);
+  els.stopwatchCode.value = settings.stopwatchCode;
+  lapLink.setCode(settings.stopwatchCode);
   save();
 });
 els.decimals.addEventListener('change', () => { settings.decimals = Number(els.decimals.value); save(); renderLaps(); });
