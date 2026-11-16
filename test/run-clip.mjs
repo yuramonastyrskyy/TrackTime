@@ -1,27 +1,36 @@
 // Runs the detector over a video file and prints what the app would announce.
-// Usage: node test/run-clip.mjs path/to/clip.mp4 [ignoreSeconds] [--log session-log.json] [--fps 12]
+// Usage: node test/run-clip.mjs path/to/clip.mp4 [ignoreSeconds] [--log session-log.json] [--fps 12] [--rest]
 // Needs ffmpeg on the PATH. The clip should be filmed along the finish line.
 // With --log (a log saved by "Record + time"), the markers and ignore time from
 // that session are used, so a recording replays exactly as it was set up.
 // Phone recordings have a variable frame rate; frames are resampled to 60 fps,
 // or to --fps N to mimic a phone that could only process N frames a second live.
+// --rest skips frames inside the ignore window, like the app's "Rest between laps".
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { buildSampler, readSamplesGray, LineDetector, LapCounter, formatLap } from '../js/detector.js';
+import { buildSampler, readSamplesGray, LineDetector, LapCounter, formatLap, inRestWindow } from '../js/detector.js';
 
-export async function runClip(file, ignoreMs = 14000, line = undefined, size = [540, 960], fps = 60) {
+export async function runClip(file, ignoreMs = 14000, line = undefined, size = [540, 960], fps = 60, rest = false) {
   const [W, H] = size;
   const sampler = buildSampler(W, H, line);
   const det = new LineDetector(sampler);
   const laps = new LapCounter(ignoreMs);
   const samples = new Uint8Array(sampler.sampleCount);
   const events = [];
+  let resting = false, skipped = 0;
   const ff = spawn('ffmpeg', ['-v', 'error', '-i', file, '-vf', `fps=${fps},scale=${W}:${H},format=gray`, '-f', 'rawvideo', '-']);
   let buf = Buffer.alloc(0), frame = 0;
   for await (const chunk of ff.stdout) {
     buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
     while (buf.length >= W * H) {
       const t = (frame++ * 1000) / fps;
+      if (rest && !det.learning && inRestWindow(laps, t)) {
+        if (!resting) { resting = true; det.skipGap(); }
+        skipped++;
+        buf = buf.subarray(W * H);
+        continue;
+      }
+      resting = false;
       const singles = det.singles.length;
       const hit = det.push(readSamplesGray(sampler, buf.subarray(0, W * H), samples), t);
       buf = buf.subarray(W * H);
@@ -29,6 +38,8 @@ export async function runClip(file, ignoreMs = 14000, line = undefined, size = [
       if (hit !== null) events.push(laps.crossing(hit));
     }
   }
+  events.frames = frame;
+  events.skipped = skipped;
   return events;
 }
 
@@ -36,6 +47,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   const fi = args.indexOf('--fps');
   let fps = 60;
+  const ri = args.indexOf('--rest');
+  const rest = ri >= 0;
+  if (rest) args.splice(ri, 1);
   if (fi >= 0) { fps = Number(args[fi + 1]) || 60; args.splice(fi, 2); }
   const li = args.indexOf('--log');
   let ignore = Number(args[1]) || 14, line, size;
@@ -50,7 +64,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     args.splice(li, 2);
   }
-  const events = await runClip(args[0], ignore * 1000, line, size, fps);
+  const events = await runClip(args[0], ignore * 1000, line, size, fps, rest);
   for (const e of events) {
     const at = (e.at / 1000).toFixed(2).padStart(7);
     if (e.type === 'start') console.log(`${at}  start`);
@@ -58,4 +72,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (e.type === 'single') console.log(`${at}  single rider, not a team (ignored)`);
     else console.log(`${at}  ignored (${(e.since / 1000).toFixed(2)} s after)`);
   }
+  if (rest) console.log(`rest: skipped ${events.skipped} of ${events.frames} frames (${Math.round((100 * events.skipped) / events.frames)}%)`);
 }
