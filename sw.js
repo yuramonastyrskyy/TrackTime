@@ -1,7 +1,9 @@
 // Offline cache: the app works at the velodrome without internet after one visit.
-const VERSION = 'tracktime-v4';
+const VERSION = 'tracktime-v5';
 const CLIPS = [...Array(100).keys()].map((n) => `audio/en/${n}.m4a`).concat(['point', 'minute', 'start'].map((w) => `audio/en/${w}.m4a`));
-const SHELL = ['./', 'index.html', 'styles.css', 'js/app.js', 'js/detector.js', 'js/speech.js', 'js/recorder.js', 'js/glsampler.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...CLIPS];
+// Coach clips that exist (see audio/coach/README.md). Add a6/b6 here once recorded.
+const COACH = ['a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a7', 'a8', 'a9', 'b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b7', 'b8', 'b9'].map((n) => `audio/coach/${n}.m4a`);
+const SHELL = ['./', 'index.html', 'styles.css', 'js/app.js', 'js/detector.js', 'js/speech.js', 'js/recorder.js', 'js/glsampler.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...CLIPS, ...COACH];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

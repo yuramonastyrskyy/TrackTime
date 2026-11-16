@@ -50,10 +50,12 @@ Lap times use the camera's frame timestamps, so they are accurate to one frame (
 
 Code:
 - `js/detector.js`: line sampling, crossing detection and lap logic (no browser APIs, tested in Node).
-- `js/speech.js`: announcements, using the phone's voice or the recorded clips in `audio/en/`.
+- `js/speech.js`: announcements, using the coach's voice (`audio/coach/`), the phone's voice or the recorded clips in `audio/en/`.
 - `js/app.js`: camera, markers, screens and settings.
 - `js/recorder.js`: Record + log mode (video parts, IndexedDB storage, log and CSV, sharing).
 - `sw.js`, `manifest.webmanifest`: offline use and "Add to Home Screen".
+
+**Coach voice** (the default) plays the coach's own recorded digits the way she calls times: units + tenths, so 23.7 is "три сім". See `audio/coach/README.md`.
 
 The clips in `audio/en/` are generated with espeak-ng. You can replace any of them with your own recordings (for example the coach's voice) as long as the file names stay the same.
 
