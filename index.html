@@ -37,6 +37,7 @@
         <span id="status" class="pill">Set up</span>
         <span id="fps" class="fps"></span>
         <span id="recInfo" class="rec" hidden></span>
+        <span id="linkPill" class="fps" hidden></span>
       </div>
       <div class="last">
         <span class="label">Last lap</span>
@@ -92,6 +93,12 @@
           <span>Rest between laps</span>
         </label>
         <small class="hint">On: after each lap the app stops looking at the line until 1.5 s before the ignore time ends, so the phone stays cooler. The camera and recording keep running.</small>
+        <label class="field">
+          <span>Stopwatch code</span>
+          <input id="stopwatchCode" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Off" class="code">
+          <small>Sends each lap to the laptop stopwatch. Find the code there under the tower icon. The phone and the laptop both need internet.</small>
+          <small id="linkStatus" class="hint"></small>
+        </label>
         <button id="recordingsBtn" class="btn" type="button">Recordings</button>
         <div class="row">
           <button id="testVoiceBtn" class="btn" type="button">Test voice</button>

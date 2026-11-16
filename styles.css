@@ -140,6 +140,7 @@ video { background: #000; }
   min-height: 44px; padding: 0 10px;
 }
 .settings input { width: 6rem; }
+.settings input.code { width: 9rem; font-family: var(--mono); letter-spacing: 0.15em; text-transform: uppercase; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
