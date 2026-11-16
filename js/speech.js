@@ -5,8 +5,9 @@
 //    Web Audio. Works everywhere once the user has tapped a button.
 //  - "coach": the coach's own voice, cut from a recording (audio/coach/). She
 //    calls a lap as units + tenths, dropping the tens: 23.7 -> "три сім",
-//    18.0 -> "вісім нуль". aN.m4a is digit N said first, bN.m4a said second.
-//    A digit with no coach clip yet falls back to the English clip.
+//    18.0 -> "вісім нуль". Best is a whole recorded call (audio/coach/37.m4a);
+//    otherwise two digit clips are joined (aN = said first, bN = said second),
+//    and a digit with no coach clip falls back to the English clip.
 // "auto" uses the phone voice when it has one, otherwise the clips.
 
 export class Announcer {
@@ -88,6 +89,7 @@ export class Announcer {
   /** Buffer keys for the coach's call, falling back to English digits she hasn't recorded. */
   coachKeys(text) {
     const [first, second] = coachDigitsFor(text);
+    if (this.buffers.has(`coach/${first}${second}`)) return [`coach/${first}${second}`];
     const pick = (pos, d) => [`coach/${pos}${d}`, `coach/${pos === 'a' ? 'b' : 'a'}${d}`, String(d)]
       .find((k) => this.buffers.has(k)) ?? String(d);
     return [pick('a', first), pick('b', second)];
@@ -126,7 +128,9 @@ export class Announcer {
 }
 
 // Coach clip names: a0..a9 (digit said first) and b0..b9 (said second).
-export const COACH_CLIPS = [...Array(10).keys()].flatMap((d) => [`a${d}`, `b${d}`]);
+// Whole calls 00..99 are preferred when recorded.
+export const COACH_CLIPS = [...Array(10).keys()].flatMap((d) => [`a${d}`, `b${d}`])
+  .concat([...Array(100).keys()].map((n) => String(n).padStart(2, '0')));
 
 /** The coach's call: units digit and tenths digit. "23.7" -> [3,7]; "1:05.2" -> [5,2]; "18" -> [8,0]. */
 export function coachDigitsFor(text) {

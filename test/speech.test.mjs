@@ -19,6 +19,13 @@ test('coach keys fall back to the other position, then to English', () => {
   assert.deepEqual(a.coachKeys('16.0'), ['6', '0']);
 });
 
+test('a whole recorded call wins over joined digits', () => {
+  const a = new Announcer({ mode: 'coach' });
+  a.buffers = new Map([['coach/37', 1], ['coach/a3', 1], ['coach/b7', 1]]);
+  assert.deepEqual(a.coachKeys('23.7'), ['coach/37']);
+  assert.deepEqual(a.coachKeys('13.7'), ['coach/37']);
+});
+
 test('english words are unchanged', () => {
   assert.deepEqual(wordsFor('17.4'), ['17', 'point', '4']);
 });
