@@ -13,7 +13,22 @@
 
 export const DEFAULT_API = 'https://pacemaker-theta.vercel.app';
 
-const WHERE_TEXT = { red: 'Under red', blue: 'Under blue', any: 'Any line' };
+const WHERE_TEXT = { red: 'Under red', blue: 'Under blue', any: 'Anywhere' };
+
+// Accepted spellings for "where" (any case), so small differences on the
+// Pacemaker side still show the right line. Unknown text is shown as it came.
+const WHERE_ALIASES = {
+  red: ['red', 'under red', 'under_red', 'underred', 'sprint', 'sprinter', 'червона', 'червоний', 'під червоною', 'до червоної'],
+  blue: ['blue', 'under blue', 'under_blue', 'underblue', 'stayer', 'синя', 'синій', 'під синьою', 'до синьої'],
+  any: ['any', 'anywhere', 'free', 'будь-де', 'вільно'],
+};
+/** 'red' | 'blue' | 'any', the raw text when it is something else, or null when missing. */
+export function parseWhere(v) {
+  if (typeof v !== 'string' || !v.trim()) return null;
+  const k = v.trim().toLowerCase().replace(/\s+/g, ' ');
+  for (const [where, names] of Object.entries(WHERE_ALIASES)) if (names.includes(k)) return where;
+  return v.trim().slice(0, 30);
+}
 
 /**
  * Reads a plan from a location hash such as "#pm=eyJ2Ijox…".
@@ -65,7 +80,9 @@ function parseBlock(b) {
   else if (pos(b.laps) && Number.isInteger(b.laps)) block.laps = b.laps;
   else return null;
   if (block.kind === 'ride') {
-    block.where = WHERE_TEXT[b.where] ? b.where : 'any';
+    // "where", or the same thing under another name.
+    const where = parseWhere(b.where ?? b.line ?? b.lane ?? b.zone);
+    if (where) block.where = where;
     if (pos(b.from) && pos(b.to)) { block.from = b.from; block.to = b.to; } else if (pos(b.target)) block.target = b.target;
   }
   return block;
@@ -182,11 +199,12 @@ export function gapBand(gap) {
 export function describeBlock(block, target = null) {
   if (!block) return '';
   if (block.kind === 'rest') return 'Rest';
-  const where = WHERE_TEXT[block.where] || WHERE_TEXT.any;
-  if (target !== null && block.from !== undefined) return `${where} · ${target.toFixed(1)} s`;
-  if (block.from !== undefined) return `${where} · ${block.from.toFixed(1)} → ${block.to.toFixed(1)} s`;
-  if (block.target !== undefined) return `${where} · ${block.target.toFixed(1)} s`;
-  return where;
+  // No "where" in the plan: just the target.
+  const parts = block.where ? [WHERE_TEXT[block.where] || block.where] : [];
+  if (target !== null && block.from !== undefined) parts.push(`${target.toFixed(1)} s`);
+  else if (block.from !== undefined) parts.push(`${block.from.toFixed(1)} → ${block.to.toFixed(1)} s`);
+  else if (block.target !== undefined) parts.push(`${block.target.toFixed(1)} s`);
+  return parts.join(' · ') || 'Ride';
 }
 
 /** "10 min", "8 laps". */

@@ -36,7 +36,7 @@ test('reads the plan from the #pm= link', () => {
 test('handles non-ASCII names, other hash params and unknown fields', () => {
   const r = planFromHash(`${planToHash({ ...SPEC, name: 'Коридор', extra: { x: 1 }, blocks: [{ kind: 'ride', min: 1, target: 20, colour: 'pink' }] })}&foo=1`);
   assert.equal(r.plan.name, 'Коридор');
-  assert.deepEqual(r.plan.blocks[0], { kind: 'ride', min: 1, where: 'any', target: 20 });
+  assert.deepEqual(r.plan.blocks[0], { kind: 'ride', min: 1, target: 20 });
   assert.equal(r.plan.extra, undefined);
 });
 
@@ -58,12 +58,25 @@ test('a bad link gives a short note instead of a plan', () => {
   assert.match(parsePlan([1, 2]).error, /could not be read/);
 });
 
+test('"where" in other spellings, other field names, and unknown values', () => {
+  const where = (b) => parsePlan({ blocks: [{ min: 1, target: 23, ...b }] }).plan.blocks[0].where;
+  assert.equal(where({ where: 'RED' }), 'red');
+  assert.equal(where({ where: 'under_blue' }), 'blue');
+  assert.equal(where({ where: 'Синя' }), 'blue');
+  assert.equal(where({ lane: 'red' }), 'red');
+  assert.equal(where({ zone: 'blue' }), 'blue');
+  assert.equal(where({ where: 'any' }), 'any');
+  assert.equal(where({ where: 'black' }), 'black');
+  assert.equal(where({}), undefined);
+  assert.equal(describeBlock(parsePlan({ blocks: [{ min: 1, target: 23, where: 'black' }] }).plan.blocks[0]), 'black · 23.0 s');
+});
+
 test('missing optional fields get defaults', () => {
   const { plan } = parsePlan({ blocks: [{ min: 3 }] });
   assert.equal(plan.id, null);
   assert.equal(plan.name, 'Plan');
   assert.equal(plan.api, DEFAULT_API);
-  assert.deepEqual(plan.blocks[0], { kind: 'ride', min: 3, where: 'any' });
+  assert.deepEqual(plan.blocks[0], { kind: 'ride', min: 3 });
   assert.equal(parsePlan({ api: 'javascript:alert(1)', blocks: [{ min: 1 }] }).plan.api, DEFAULT_API);
   assert.equal(parsePlan({ api: 'http://localhost:8787/', blocks: [{ min: 1 }] }).plan.api, 'http://localhost:8787');
 });
@@ -188,7 +201,9 @@ test('lap colour bands', () => {
 });
 
 test('block text and clock', () => {
-  assert.equal(describeBlock({ kind: 'ride', where: 'any', laps: 8, target: 22 }), 'Any line · 22.0 s');
+  assert.equal(describeBlock({ kind: 'ride', where: 'any', laps: 8, target: 22 }), 'Anywhere · 22.0 s');
+  assert.equal(describeBlock({ kind: 'ride', laps: 8, target: 22 }), '22.0 s');
+  assert.equal(describeBlock({ kind: 'ride', min: 1 }), 'Ride');
   assert.equal(describeBlock({ kind: 'ride', where: 'blue', min: 1 }), 'Under blue');
   assert.equal(formatClock(61001), '1:02');
   assert.equal(formatClock(-5), '0:00');
