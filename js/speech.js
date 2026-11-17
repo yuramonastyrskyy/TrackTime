@@ -56,7 +56,7 @@ export class Announcer {
 
   async loadClips() {
     if (!this.ctx) return;
-    const names = [...Array(100).keys()].map(String).concat(['point', 'minute', 'start']);
+    const names = [...Array(100).keys()].map(String).concat(['point', 'minute', 'start', 'plus', 'minus', 'nextblock']);
     await Promise.all(names.map(async (n) => {
       try {
         const res = await fetch(`${this.clipsBase}${n}.m4a`);
@@ -71,9 +71,14 @@ export class Announcer {
     this.speak('start', ['start']);
   }
 
-  /** text is what is shown, e.g. "17.4" or "1:05.2". */
-  sayLap(text) {
-    this.speak(text, wordsFor(text));
+  /**
+   * text is what is shown, e.g. "17.4" or "1:05.2".
+   * Optional extras: gap (seconds to target, said as "plus 0.3" / "minus 0.2"
+   * after a short pause) and nextBlock (adds "next block").
+   */
+  sayLap(text, { gap = null, decimals = 1, nextBlock = false } = {}) {
+    const opts = { gap, decimals, nextBlock };
+    this.speak(spokenText(text, opts), wordsFor(text).concat(extraWords(opts)));
   }
 
   speak(text, words) {
@@ -96,6 +101,7 @@ export class Announcer {
     let t = this.ctx.currentTime + 0.03;
     this.current = [];
     for (const w of words) {
+      if (w === PAUSE) { t += 0.25; continue; }
       const buf = this.buffers.get(w);
       if (!buf) continue;
       const src = this.ctx.createBufferSource();
@@ -106,6 +112,31 @@ export class Announcer {
       t += buf.duration + 0.02;
     }
   }
+}
+
+export const PAUSE = '_';
+
+/** Clip words said after the lap time: [PAUSE, "plus", "0", "point", "3", PAUSE, "nextblock"]. */
+export function extraWords({ gap = null, decimals = 1, nextBlock = false } = {}) {
+  const out = [];
+  if (gap !== null && Number.isFinite(gap)) {
+    const abs = Math.abs(gap).toFixed(decimals);
+    const sign = gap < 0 && Number(abs) !== 0 ? 'minus' : 'plus';
+    out.push(PAUSE, sign, ...wordsFor(abs));
+  }
+  if (nextBlock) out.push(PAUSE, 'nextblock');
+  return out;
+}
+
+/** What the phone voice says for the same extras: "24.3. plus 0.3. next block". */
+export function spokenText(text, { gap = null, decimals = 1, nextBlock = false } = {}) {
+  let out = text;
+  if (gap !== null && Number.isFinite(gap)) {
+    const abs = Math.abs(gap).toFixed(decimals);
+    out += `. ${gap < 0 && Number(abs) !== 0 ? 'minus' : 'plus'} ${abs}`;
+  }
+  if (nextBlock) out += '. next block';
+  return out;
 }
 
 /** "17.4" -> ["17","point","4"]; "1:05.2" -> ["1","minute","5","point","2"]. */

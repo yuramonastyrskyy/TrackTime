@@ -8,6 +8,10 @@ import {
   SessionRecorder, sessionFiles, shareOrDownload, store, formatBytes,
 } from './recorder.js';
 import { LapSender, linkOverrides, normalizeCode } from './lapLink.js';
+import { planFromHash, planProgress, stripText } from './plan.js';
+import {
+  newSession, sessionStart, sessionLap, sessionUndo, sessionDuration, sendSession, apiFor,
+} from './session.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -21,13 +25,17 @@ const els = {
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkPill: $('linkPill'),
   restBetweenLaps: $('restBetweenLaps'),
+  planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planLeft: $('planLeft'),
+  planNext: $('planNext'), planClose: $('planClose'), toast: $('toast'), sayGap: $('sayGap'),
+  sendBtn: $('sendBtn'), sendNote: $('sendNote'),
+  sessionsBtn: $('sessionsBtn'), sessions: $('sessions'), sessList: $('sessList'),
   recordingsBtn: $('recordingsBtn'), recordings: $('recordings'), recList: $('recList'), recStorage: $('recStorage'),
 };
 
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
@@ -77,6 +85,100 @@ function frameEpoch(t) {
 }
 let resting = false;         // true while frames are skipped inside the ignore window
 
+// ---------- Pacemaker plan (from the #pm= link) ----------
+const PLAN_KEY = 'tracktime.plan.v1';
+let plan = loadSavedPlan();
+let announcedBlock = 0;      // last block index "next block" was said for
+function loadSavedPlan() {
+  try { return JSON.parse(sessionStorage.getItem(PLAN_KEY)) || null; } catch { return null; }
+}
+function setPlan(p) {
+  plan = p;
+  try {
+    if (p) sessionStorage.setItem(PLAN_KEY, JSON.stringify(p)); else sessionStorage.removeItem(PLAN_KEY);
+  } catch { /* private mode */ }
+  if (session && !session.laps.length) { session.plan = p; persistSession(); }
+  announcedBlock = 0;
+  renderPlan();
+  renderLaps();
+}
+function readPlanLink() {
+  const r = planFromHash(location.hash);
+  if (!r) return;
+  // Keep the plan for this visit, but take it out of the address bar.
+  try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignored */ }
+  if (r.error) { showToast(r.error); return; }
+  setPlan(r.plan);
+  showToast(`Plan loaded: ${r.plan.name}`);
+}
+window.addEventListener('hashchange', readPlanLink);
+
+let toastTimer = null;
+function showToast(text) {
+  els.toast.textContent = text;
+  els.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { els.toast.hidden = true; }, 6000);
+}
+els.toast.addEventListener('click', () => { els.toast.hidden = true; });
+
+/** Plan-clock ms now (since the first crossing), or null before it. */
+function planNow() {
+  if (counter.startTime === null) return null;
+  return Math.max(0, lastFrameT - counter.startTime);
+}
+function currentProgress() {
+  if (!plan) return null;
+  const laps = counter.laps.map((l) => ({ ms: l.ms, t: l.at - counter.startTime }));
+  return planProgress(plan, laps, planNow());
+}
+function renderPlan() {
+  els.planStrip.hidden = !plan;
+  if (!plan) return;
+  const text = stripText(plan, currentProgress());
+  els.planName.textContent = plan.name;
+  els.planBlock.textContent = text.block;
+  els.planLeft.textContent = text.left;
+  els.planNext.textContent = text.next;
+}
+setInterval(() => { if (plan && !els.panel.hidden) renderPlan(); }, 250);
+els.planClose.addEventListener('click', () => {
+  if (els.planClose.dataset.armed !== '1') {
+    els.planClose.dataset.armed = '1';
+    els.planClose.textContent = 'Tap again to close plan';
+    setTimeout(() => { els.planClose.dataset.armed = ''; els.planClose.textContent = '×'; }, 3000);
+    return;
+  }
+  els.planClose.dataset.armed = '';
+  els.planClose.textContent = '×';
+  setPlan(null);
+});
+
+// ---------- timing sessions (kept in IndexedDB as they go) ----------
+let session = null;          // the session being timed
+let lastSession = null;      // the last finished session, for "Send to Pacemaker"
+function sessionSettings() {
+  return {
+    ignoreSec: settings.ignoreSec, decimals: settings.decimals, voice: settings.voice,
+    countSingles: !!settings.countSingles, restBetweenLaps: settings.restBetweenLaps !== false,
+    sayGap: !!settings.sayGap, recorded: !!recorder,
+  };
+}
+function persistSession(s = session) {
+  if (!s || s.startedAt === null) return; // nothing worth keeping before the first crossing
+  store.saveTiming(s).catch(() => { /* storage full or blocked: laps still on screen */ });
+}
+/** Ends the current session; keeps it when it has laps, drops it otherwise. */
+function finishSession() {
+  const s = session;
+  session = null;
+  if (!s) return;
+  s.endedAt = Date.now();
+  if (s.laps.length) { persistSession(s); lastSession = s; } else {
+    store.deleteTiming(s.id).catch(() => {});
+  }
+}
+
 const STATUS_TEXT = {
   setup: 'Set up', learning: 'Keep the line clear', armed: 'Waiting for first rider', timing: 'Timing',
 };
@@ -90,6 +192,8 @@ function setState(s) {
   els.recBtn.hidden = active;
   els.markBtn.hidden = !(active && recorder);
   els.startBtn.classList.toggle('wide', active && !recorder);
+  els.sendBtn.hidden = active || !lastSession?.laps.length;
+  if (active) els.sendNote.hidden = true;
   recorder?.log('state', { detail: s });
   drawOverlay();
 }
@@ -299,7 +403,11 @@ function startTiming() {
   announcer.unlock(); // inside the tap, so phones allow sound
   counter.ignoreMs = settings.ignoreSec * 1000;
   counter.reset();
+  finishSession();
+  session = newSession({ plan, settings: sessionSettings() });
+  announcedBlock = 0;
   renderLaps();
+  renderPlan();
   try { prepareDetector(); } catch (e) { els.lapInfo.textContent = e.message; return false; }
   setState('learning');
   requestWakeLock();
@@ -308,6 +416,7 @@ function startTiming() {
 
 function stopTiming() {
   detector = null;
+  finishSession();
   releaseWakeLock();
   if (recorder) stopRecording();
   if (stream) setState('setup');
@@ -324,21 +433,42 @@ function onCrossing(t) {
     recorder.log(r.type, fields);
   }
   if (r.type === 'start' || r.type === 'lap') {
-    lapLink.sendCrossing(frameEpoch(t), r.type === 'start' ? 0 : r.lap);
+    const at = frameEpoch(t);
+    lapLink.sendCrossing(at, r.type === 'start' ? 0 : r.lap);
+    if (session) {
+      if (r.type === 'start') sessionStart(session, at); else sessionLap(session, r.lap, r.ms, at);
+      persistSession();
+    }
   }
   if (r.type === 'start') {
     setState('timing');
     els.lapInfo.textContent = 'Clock started';
     announcer.sayStart();
+    renderPlan();
   } else if (r.type === 'lap') {
     const text = formatLap(r.ms, settings.decimals);
-    announcer.sayLap(text);
+    announcer.sayLap(text, lapExtras());
     renderLaps();
+    renderPlan();
   }
+}
+
+// "Say gap to target": the gap of the lap just finished, and "next block" when
+// the plan moved on. Nothing extra without a plan or with the setting off.
+function lapExtras() {
+  const p = currentProgress();
+  if (!p || !settings.sayGap) return {};
+  const last = p.results[p.results.length - 1];
+  const nextBlock = !p.done && p.index > announcedBlock;
+  announcedBlock = Math.max(announcedBlock, p.index);
+  return { gap: last?.gap ?? null, decimals: settings.decimals, nextBlock };
 }
 
 els.undoBtn.addEventListener('click', () => {
   const undone = counter.undoLast();
+  if (session) { sessionUndo(session); persistSession(); }
+  if (plan) announcedBlock = currentProgress().index;
+  renderPlan();
   recorder?.log('undo', { lap: undone?.lap, detail: undone ? 'lap' : 'start' });
   if (counter.startTime === null && (state === 'timing')) setState('armed');
   renderLaps();
@@ -348,6 +478,8 @@ function renderLaps() {
   const laps = counter.laps;
   const dec = settings.decimals;
   els.undoBtn.disabled = laps.length === 0;
+  const results = plan && laps.length ? currentProgress().results : [];
+  els.lastLap.className = 'big';
   if (!laps.length) {
     els.lastLap.textContent = '--.-';
     els.lapInfo.textContent = counter.startTime === null ? '' : 'Clock started';
@@ -357,12 +489,19 @@ function renderLaps() {
   const last = laps[laps.length - 1];
   const best = Math.min(...laps.map((l) => l.ms));
   els.lastLap.textContent = formatLap(last.ms, dec);
+  const lastResult = results[laps.length - 1];
+  if (lastResult?.band) els.lastLap.classList.add(`band-${lastResult.band}`);
   const prev = laps[laps.length - 2];
   const delta = prev ? ` · ${last.ms <= prev.ms ? '−' : '+'}${(Math.abs(last.ms - prev.ms) / 1000).toFixed(dec)}` : '';
-  els.lapInfo.textContent = `Lap ${last.lap} · best ${formatLap(best, dec)}${delta}`;
+  let target = '';
+  if (lastResult?.break) target = ' · break';
+  else if (lastResult?.target != null) target = ` · target ${lastResult.target.toFixed(1)}`;
+  els.lapInfo.textContent = `Lap ${last.lap} · best ${formatLap(best, dec)}${delta}${target}`;
   els.laps.replaceChildren(...laps.slice().reverse().map((l) => {
     const li = document.createElement('li');
     if (l.ms === best) li.className = 'best';
+    const band = results[l.lap - 1]?.band;
+    if (band) li.classList.add(`band-${band}`);
     const small = document.createElement('small');
     small.textContent = String(l.lap);
     li.append(small, formatLap(l.ms, dec));
@@ -469,6 +608,7 @@ function fillSettings() {
   els.countSingles.checked = !!settings.countSingles;
   els.stopwatchCode.value = settings.stopwatchCode;
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
+  els.sayGap.checked = !!settings.sayGap;
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -502,6 +642,10 @@ els.resetMarkersBtn.addEventListener('click', () => {
 els.clearBtn.addEventListener('click', () => {
   recorder?.log('clear');
   counter.reset();
+  // Laps timed so far stay in Settings > Sessions; timing carries on as a new session.
+  if (session) { finishSession(); session = newSession({ plan, settings: sessionSettings() }); }
+  announcedBlock = 0;
+  renderPlan();
   if (state === 'timing') setState('armed');
   renderLaps();
 });
@@ -558,6 +702,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 // ---------- record + log ----------
 els.recordSound.addEventListener('change', () => { settings.recordSound = els.recordSound.checked; save(); });
 els.restBetweenLaps.addEventListener('change', () => { settings.restBetweenLaps = els.restBetweenLaps.checked; save(); });
+els.sayGap.addEventListener('change', () => { settings.sayGap = els.sayGap.checked; save(); });
 els.countSingles.addEventListener('change', () => {
   settings.countSingles = els.countSingles.checked;
   save();
@@ -737,4 +882,116 @@ function fileButton(label, files) {
   return b;
 }
 
+// ---------- Send to Pacemaker ----------
+// Only ever on a tap. No keys or logins: Pacemaker asks the person to check
+// and save the ride.
+const API_OVERRIDE = new URLSearchParams(location.search).get('pmapi'); // e.g. ?pmapi=http://localhost:8787 for testing
+const SEND_FAILED = "Couldn't send. It's saved in Settings > Sessions; try again with signal.";
+
+els.sendBtn.addEventListener('click', () => {
+  if (lastSession) sendToPacemaker(lastSession, els.sendBtn, els.sendNote);
+});
+
+async function sendToPacemaker(s, btn, note) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  note.hidden = true;
+  try {
+    const answer = await sendSession(s, { api: apiFor(s, API_OVERRIDE) });
+    s.sentAt = Date.now();
+    s.sent = answer;
+    await store.saveTiming(s).catch(() => {});
+    btn.textContent = 'Sent ✓';
+    note.textContent = 'Sent to Pacemaker.';
+    note.className = 'note';
+    note.hidden = false;
+    openPacemaker(answer);
+  } catch {
+    btn.textContent = label;
+    note.textContent = SEND_FAILED;
+    note.className = 'warn';
+    note.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openPacemaker(answer) {
+  const tg = window.Telegram?.WebApp;
+  if (tg?.initData && answer.telegram && typeof tg.openTelegramLink === 'function') {
+    try { tg.openTelegramLink(answer.telegram); return; } catch { /* fall back to the web page */ }
+  }
+  if (answer.web) location.href = answer.web;
+}
+
+// ---------- Settings > Sessions ----------
+els.sessionsBtn.addEventListener('click', () => { els.settings.close(); openSessions(); });
+
+async function openSessions() {
+  els.sessList.replaceChildren(textP('Loading…', 'meta'));
+  if (!els.sessions.open) els.sessions.showModal();
+  let list = [];
+  try { list = await store.listTimings(); } catch (e) {
+    els.sessList.replaceChildren(textP(`Could not open saved sessions (${e?.message || e}).`, 'warn'));
+    return;
+  }
+  list.sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt));
+  els.sessList.replaceChildren(...(list.length ? list.map(renderTiming) : [textP('No sessions yet. Every Start timing is kept here.', 'meta')]));
+}
+
+function renderTiming(s) {
+  const box = document.createElement('div');
+  box.className = 'recitem';
+  const h = document.createElement('h3');
+  h.textContent = new Date(s.startedAt ?? s.createdAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const active = s.id === session?.id;
+  const bits = [`${s.laps.length} ${s.laps.length === 1 ? 'lap' : 'laps'}`, formatDuration(sessionDuration(s))];
+  if (s.plan?.name) bits.push(s.plan.name);
+  if (s.sentAt) bits.push('Sent');
+  if (active) bits.push('timing now');
+  box.append(h, textP(bits.join(' · '), 'meta'));
+  if (!s.endedAt && !active) box.append(textP('Stopped unexpectedly. The laps up to then are here.', 'warn'));
+  const row = document.createElement('div');
+  row.className = 'files';
+  const note = textP('', 'warn');
+  note.hidden = true;
+  if (!active && s.laps.length) {
+    const send = document.createElement('button');
+    send.type = 'button'; send.className = 'btn';
+    send.textContent = s.sentAt ? 'Send to Pacemaker again' : 'Send to Pacemaker';
+    send.addEventListener('click', () => sendToPacemaker(s, send, note));
+    row.append(send);
+  }
+  if (s.sent?.web) {
+    const a = document.createElement('a');
+    a.className = 'btn link'; a.href = s.sent.web; a.textContent = 'Open in Pacemaker';
+    row.append(a);
+  }
+  if (!active) {
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'btn danger'; del.textContent = 'Delete';
+    del.addEventListener('click', async () => {
+      if (del.dataset.armed !== '1') { del.dataset.armed = '1'; del.textContent = 'Tap again to delete'; return; }
+      del.disabled = true;
+      try {
+        await store.deleteTiming(s.id);
+        if (lastSession?.id === s.id) { lastSession = null; els.sendBtn.hidden = true; }
+        box.remove();
+      } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; }
+    });
+    row.append(del);
+  }
+  box.append(row, note);
+  return box;
+}
+
+function formatDuration(ms) {
+  const s = Math.round(ms / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+readPlanLink();
+renderPlan();
 renderLaps();
