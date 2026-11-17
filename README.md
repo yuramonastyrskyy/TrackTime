@@ -37,6 +37,18 @@ Replaying a recording with the same markers and settings:
 node test/run-clip.mjs tracktime-2026-11-14_0812-part1.mp4 --log tracktime-2026-11-14_0812-log.json
 ```
 
+## With Pacemaker
+
+Pacemaker (the coach's training app) holds track session plans and checks the laps against them. TrackTime only times the laps.
+
+- **Plan from a link.** Pacemaker opens TrackTime as `https://<TrackTime address>/#pm=<plan>`. The plan stays for the visit (also across a reload) and is removed from the address bar. A plan strip above the lap list shows the plan name, the current block ("Block 2 of 5 · Under blue · 24.0 s"), the time or laps left in it, and the next block. Tap **×** twice to close the plan. A link that can't be read shows a short note and the app carries on without a plan.
+- **Plan clock.** It starts at the first crossing, like the lap clock. Time blocks end on that clock, lap blocks after their last lap. A lap longer than twice the target is a break (rest, or riders off on the apron) and is not scored. A ramp's target moves evenly from `from` to `to` over the block.
+- **Lap colours** (with a plan): within ±0.3 s of the target green, 0.3–0.8 s slow orange, more than 0.8 s slow red, more than 0.3 s fast violet.
+- **Settings → Say gap to target** (off by default): after the lap time, says the gap, for example "24.3 … plus 0.3", and "next block" on the first lap after the plan moves on.
+- **Sessions.** Every timing session (Start timing and Record + time) is saved on the phone as it goes, so a reload or crash loses nothing: start time, each lap with its phone time, the plan and the settings. **Settings → Sessions** lists them, newest first, with **Send to Pacemaker** and **Delete**.
+- **Send to Pacemaker.** After **Stop**, and from Sessions. Nothing is ever sent without that tap, and there are no keys or logins: Pacemaker asks the person to check and save the ride. It POSTs the laps as JSON (`Content-Type: text/plain`, so the browser sends no CORS preflight) to `<api>/api/rides?action=track`, where `<api>` is the plan's `api` or, without a plan, `https://pacemaker-theta.vercel.app` (`DEFAULT_API` in `js/plan.js`). Pacemaker's answer opens in Telegram when TrackTime runs inside Telegram, otherwise in the same tab. Without signal the session stays saved; try again later.
+- For testing, `?pmapi=http://localhost:8787` sends to another address. `test/session.test.mjs` sends to a small local stub server.
+
 ## Hosting on GitHub Pages
 
 In the repository on GitHub: **Settings → Pages → Build and deployment**, set **Source** to "Deploy from a branch", choose `main` and `/ (root)`, then **Save**. After a minute the app is live at `https://<your-user>.github.io/TrackTime/`.
@@ -53,7 +65,9 @@ Code:
 - `js/detector.js`: line sampling, crossing detection and lap logic (no browser APIs, tested in Node).
 - `js/speech.js`: announcements, using the phone's voice or the recorded clips in `audio/en/`.
 - `js/app.js`: camera, markers, screens and settings.
-- `js/recorder.js`: Record + log mode (video parts, IndexedDB storage, log and CSV, sharing).
+- `js/recorder.js`: Record + log mode (video parts, IndexedDB storage, log and CSV, sharing), and storage for timing sessions.
+- `js/plan.js`: Pacemaker plans: reading the link, the plan clock, targets, breaks and lap colours (no browser APIs, tested in Node).
+- `js/session.js`: timing sessions and sending them to Pacemaker (tested in Node).
 - `sw.js`, `manifest.webmanifest`: offline use and "Add to Home Screen".
 
 The clips in `audio/en/` are generated with espeak-ng. You can replace any of them with your own recordings (for example the coach's voice) as long as the file names stay the same.
@@ -61,7 +75,7 @@ The clips in `audio/en/` are generated with espeak-ng. You can replace any of th
 ## Tests
 
 ```sh
-npm test                                   # lap logic and sampling
+npm test                                   # lap logic, sampling, plans and sessions
 CLIPS_DIR=path/to/video_footage npm test   # also replays trimmed_01..03.mp4 (needs ffmpeg)
 node test/run-clip.mjs clip.mp4            # print what the app would announce for a video
 ```

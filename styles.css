@@ -11,6 +11,8 @@
   --blue: #3e9bff;        /* stayers' line */
   --timber: #d9a35f;      /* track boards */
   --good: #46c37b;
+  --slow: #f0a03c;        /* 0.3–0.8 s slow */
+  --fast: #b18cff;        /* over 0.3 s fast */
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
 }
@@ -142,5 +144,40 @@ video { background: #000; }
 .settings input { width: 6rem; }
 .settings input.code { width: 9rem; font-family: var(--mono); letter-spacing: 0.15em; text-transform: uppercase; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* Pacemaker plan strip and lap colours */
+.plan {
+  background: rgb(18 38 58 / 0.92); border: 1px solid var(--surface-2); border-radius: 12px;
+  padding: 8px 12px; display: grid; gap: 2px;
+}
+.plan-top { display: flex; align-items: center; gap: 8px; margin: -4px 0; }
+.plan-name { flex: 1; font-size: 0.85rem; color: var(--muted); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-x {
+  font: 600 1rem var(--font); color: var(--muted); background: none; border: 0;
+  min-height: 32px; min-width: 32px; padding: 0 6px; cursor: pointer;
+}
+.plan-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 10px; }
+.plan-block { font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.plan-left { font: 600 1rem var(--mono); font-variant-numeric: tabular-nums; }
+.plan-next { color: var(--muted); font-size: 0.8rem; }
+.big.band-good { color: var(--good); }
+.big.band-slow { color: var(--slow); }
+.big.band-veryslow { color: var(--red); }
+.big.band-fast { color: var(--fast); }
+.laps li.band-good { color: var(--good); }
+.laps li.band-slow { color: var(--slow); }
+.laps li.band-veryslow { color: var(--red); }
+.laps li.band-fast { color: var(--fast); }
+.btn.send { border-color: var(--good); color: var(--good); }
+.btn.link { display: flex; align-items: center; text-decoration: none; }
+.panel > .note, .panel > .warn { margin: 0; font-size: 0.9rem; }
+.warn { color: var(--timber); }
+.toast {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: max(12px, env(safe-area-inset-top)); z-index: 5; margin: 0;
+  width: max-content; max-width: calc(100vw - 32px);
+  background: var(--surface-2); color: var(--text); border-radius: 12px; padding: 10px 14px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.4);
+}
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

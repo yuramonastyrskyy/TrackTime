@@ -8,7 +8,7 @@
 // what was recorded so far is still there under Settings -> Recordings.
 
 const DB_NAME = 'tracktime-rec';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // 2: timing sessions ('timings')
 
 export const REC_DEFAULTS = {
   partMinutes: 10,
@@ -86,6 +86,7 @@ function openDb() {
       const db = req.result;
       if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('chunks')) db.createObjectStore('chunks');
+      if (!db.objectStoreNames.contains('timings')) db.createObjectStore('timings', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -113,6 +114,10 @@ export const store = {
   partBlob: (id, part, type) => tx('chunks', 'readonly', (s) => reqP(
     s.getAll(IDBKeyRange.bound([id, part, 0], [id, part, Number.MAX_SAFE_INTEGER])),
   )).then((blobs) => new Blob(blobs, { type })),
+  // Timing sessions (laps of every Start timing / Record + time run).
+  saveTiming: (session) => tx('timings', 'readwrite', (s) => { s.put(session); }),
+  listTimings: () => tx('timings', 'readonly', (s) => reqP(s.getAll())),
+  deleteTiming: (id) => tx('timings', 'readwrite', (s) => { s.delete(id); }),
   deleteSession: (id) => openDb().then((db) => new Promise((resolve, reject) => {
     const t = db.transaction(['sessions', 'chunks'], 'readwrite');
     t.objectStore('sessions').delete(id);

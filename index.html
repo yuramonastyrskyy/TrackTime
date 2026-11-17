@@ -46,7 +46,20 @@
       </div>
     </header>
 
+    <p id="toast" class="toast" role="status" hidden></p>
+
     <footer class="panel" id="panel" hidden>
+      <section id="planStrip" class="plan" aria-label="Plan" hidden>
+        <div class="plan-top">
+          <strong id="planName" class="plan-name"></strong>
+          <button id="planClose" class="plan-x" type="button" aria-label="Close plan">×</button>
+        </div>
+        <div class="plan-row">
+          <span id="planBlock" class="plan-block"></span>
+          <span id="planLeft" class="plan-left"></span>
+        </div>
+        <div id="planNext" class="plan-next"></div>
+      </section>
       <ol id="laps" class="laps" aria-label="Lap times"></ol>
       <div class="actions">
         <button id="startBtn" class="btn primary" type="button">Start timing</button>
@@ -54,7 +67,9 @@
         <button id="markBtn" class="btn mark" type="button" hidden>Mark</button>
         <button id="undoBtn" class="btn" type="button" disabled>Undo lap</button>
         <button id="settingsBtn" class="btn" type="button" aria-expanded="false" aria-controls="settings">Settings</button>
+        <button id="sendBtn" class="btn send wide" type="button" hidden>Send to Pacemaker</button>
       </div>
+      <p id="sendNote" class="note" role="status" hidden></p>
     </footer>
 
     <dialog id="settings" class="settings">
@@ -93,13 +108,21 @@
           <span>Rest between laps</span>
         </label>
         <small class="hint">On: after each lap the app stops looking at the line until 1.5 s before the ignore time ends, so the phone stays cooler. The camera and recording keep running.</small>
+        <label class="field check">
+          <input id="sayGap" type="checkbox">
+          <span>Say gap to target</span>
+        </label>
+        <small class="hint">With a Pacemaker plan: after the lap time, says how far it was from the target ("plus 0.3", "minus 0.2"), and "next block" when the plan moves on.</small>
         <label class="field">
           <span>Stopwatch code</span>
           <input id="stopwatchCode" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Off" class="code">
           <small>Sends each lap to the laptop stopwatch. Find the code there under the tower icon. The phone and the laptop both need internet.</small>
           <small id="linkStatus" class="hint"></small>
         </label>
-        <button id="recordingsBtn" class="btn" type="button">Recordings</button>
+        <div class="row">
+          <button id="sessionsBtn" class="btn" type="button">Sessions</button>
+          <button id="recordingsBtn" class="btn" type="button">Recordings</button>
+        </div>
         <div class="row">
           <button id="testVoiceBtn" class="btn" type="button">Test voice</button>
           <button id="resetMarkersBtn" class="btn" type="button">Reset markers</button>
@@ -118,6 +141,14 @@
         <p class="hint">Save each video part and the log to the phone or share them. Recordings stay in the app until you delete them.</p>
         <div id="recList" class="reclist"></div>
         <p id="recStorage" class="hint"></p>
+        <button class="btn primary" value="close">Done</button>
+      </form>
+    </dialog>
+    <dialog id="sessions" class="settings">
+      <form method="dialog">
+        <h2>Sessions</h2>
+        <p class="hint">Every timing session is kept here, newest first. Send one to Pacemaker to check it against the plan and save it there.</p>
+        <div id="sessList" class="reclist"></div>
         <button class="btn primary" value="close">Done</button>
       </form>
     </dialog>
