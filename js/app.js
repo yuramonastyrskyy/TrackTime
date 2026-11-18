@@ -738,9 +738,9 @@ function drawOverlay() {
 // comes back when both rings are above it. It always shows while timing.
 function keepPlanOffMarkers(bottomY) {
   if (!plan || !els.summary.hidden) return;
-  if (!els.planStrip.hidden) planTop = els.panel.offsetTop + els.planStrip.offsetTop;
+  if (!els.planStrip.hidden) planTop = edges(els.planStrip).top;
   if (!planTop) return;
-  const over = bottomY + 34 > planTop - 6;
+  const over = bottomY + 34 * mk > planTop - 6;
   if (over !== planOverMarkers) {
     planOverMarkers = over;
     els.planStrip.hidden = !planShown();
@@ -753,7 +753,7 @@ function keepPlanOffMarkers(bottomY) {
  */
 function freeBand() {
   // The HUD and the panel include their faded edges, which also dim the picture.
-  return { top: els.hud.offsetTop + els.hud.offsetHeight + 2, bottom: els.panel.offsetTop - 2 };
+  return { top: edges(els.hud).bottom + 2, bottom: edges(els.panel).top - 2 };
 }
 
 // The Set up hint card sits under the status card. When a ring (or its label)
@@ -763,9 +763,9 @@ function freeBand() {
 let hintWanted = false, hintOverMarkers = false, hintBottom = 0;
 function keepHintOffMarkers(topY) {
   if (!hintWanted) return;
-  if (!els.setupHint.hidden) hintBottom = els.setupHint.offsetTop + els.setupHint.offsetHeight;
+  if (!els.setupHint.hidden) hintBottom = edges(els.setupHint).bottom;
   if (!hintBottom) return;
-  const over = topY - 34 < hintBottom + 6;
+  const over = topY - 34 * mk < hintBottom + 6;
   if (over !== hintOverMarkers) {
     hintOverMarkers = over;
     els.setupHint.hidden = over;
@@ -775,9 +775,18 @@ function keepHintOffMarkers(topY) {
 // Overlay colours come from the CSS tokens, read once (and again when the
 // high-contrast setting changes), never per frame.
 const colors = {};
+// Ring and label size: follows the UI size, never below 0.7 so they stay easy to grab.
+let mk = 1;
 function readColors() {
   const cs = getComputedStyle(document.body);
   for (const k of ['blue', 'red', 'amber', 'text', 'bg']) colors[k] = cs.getPropertyValue(`--tt-${k}`).trim();
+  mk = Math.min(1, Math.max(0.7, parseFloat(cs.getPropertyValue('--tt-ui-scale')) || 1));
+}
+/** An element's top and bottom in overlay pixels. Measured on screen, so it is
+ *  right whatever the UI zoom (--tt-ui-scale) is. Only read on Set up draws. */
+function edges(el) {
+  const r = el.getBoundingClientRect(), o = els.overlay.getBoundingClientRect();
+  return { top: r.top - o.top, bottom: r.bottom - o.top };
 }
 readColors();
 
@@ -789,40 +798,41 @@ function drawHandle(p, n, label, editable, W, free) {
     octx.lineWidth = 2; octx.strokeStyle = '#0a1622'; octx.stroke();
     return null;
   }
-  // Halo r=30 marks the drag target; the ring is hollow-ish so the black line shows through.
+  // Halo marks the drag target; the ring is hollow-ish so the black line shows through.
+  const k = mk;
   octx.globalAlpha = 0.7;
-  octx.beginPath(); octx.arc(p.x, p.y, 30, 0, Math.PI * 2);
+  octx.beginPath(); octx.arc(p.x, p.y, 30 * k, 0, Math.PI * 2);
   octx.lineWidth = 2; octx.strokeStyle = colors.blue; octx.stroke();
   octx.globalAlpha = 1;
-  octx.beginPath(); octx.arc(p.x, p.y, 22, 0, Math.PI * 2);
+  octx.beginPath(); octx.arc(p.x, p.y, 22 * k, 0, Math.PI * 2);
   octx.fillStyle = 'rgba(10,22,34,0.45)'; octx.fill();
-  octx.lineWidth = 3; octx.strokeStyle = '#fff'; octx.stroke();
+  octx.lineWidth = 3 * k; octx.strokeStyle = '#fff'; octx.stroke();
   octx.fillStyle = '#fff';
   octx.textAlign = 'center'; octx.textBaseline = 'middle';
-  octx.font = '800 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  octx.font = `800 ${Math.round(17 * k)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
   octx.fillText(String(n), p.x, p.y + 1);
   // Label chip beside the marker (on the left when it would run off screen).
-  octx.font = '700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  const w = octx.measureText(label).width + 33, h = 28;
-  const x = p.x + 38 + w > W - 4 ? p.x - 38 - w : p.x + 38;
+  octx.font = `700 ${Math.round(14 * k)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  const w = octx.measureText(label).width + 33 * k, h = 28 * k, gap = 38 * k;
+  const x = p.x + gap + w > W - 4 ? p.x - gap - w : p.x + gap;
   let y = p.y - h / 2;
   if (free && free.bottom - free.top > h) y = Math.min(Math.max(y, free.top), free.bottom - h);
   const cy = y + h / 2;
   if (Math.abs(cy - p.y) > 4) {
     // The chip was pulled into view: a thin tether shows which ring it moves.
-    octx.beginPath(); octx.moveTo(p.x + Math.sign(x - p.x) * 22, p.y); octx.lineTo(x < p.x ? x + w : x, cy);
+    octx.beginPath(); octx.moveTo(p.x + Math.sign(x - p.x) * 22 * k, p.y); octx.lineTo(x < p.x ? x + w : x, cy);
     octx.lineWidth = 2; octx.strokeStyle = 'rgba(255,255,255,0.6)'; octx.stroke();
   }
   octx.beginPath();
-  if (octx.roundRect) octx.roundRect(x, y, w, h, 8); else octx.rect(x, y, w, h);
+  if (octx.roundRect) octx.roundRect(x, y, w, h, 8 * k); else octx.rect(x, y, w, h);
   octx.fillStyle = 'rgba(10,22,34,0.92)'; octx.fill();
   octx.lineWidth = 1; octx.strokeStyle = 'rgba(255,255,255,0.25)'; octx.stroke();
   // Grip dots: the label is a handle too, so a finger on it leaves the ring in view.
   octx.fillStyle = 'rgba(255,255,255,0.55)';
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) octx.fillRect(x + 9 + j * 5, cy - 6 + i * 5, 2.5, 2.5);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) octx.fillRect(x + (9 + j * 5) * k, cy + (-6 + i * 5) * k, 2.5 * k, 2.5 * k);
   octx.fillStyle = '#fff';
   octx.textAlign = 'left';
-  octx.fillText(label, x + 23, cy + 1);
+  octx.fillText(label, x + 23 * k, cy + 1);
   return { x, y, w, h };
 }
 

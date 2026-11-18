@@ -54,20 +54,27 @@
   --tt-fs-label: 14px;
   --tt-fs-micro: 12px;         /* operator strip */
 
-  /* Space, radius, hit sizes */
+  /* UI size. Every screen (intro, top board, bottom panel, toast, sheets) is
+     drawn at this zoom, so one number makes the whole UI larger or smaller.
+     1 = the designer's original sizes. Tap targets and safe areas below are
+     held to a usable size whatever the zoom. */
+  --tt-ui-scale: 0.6;
+
+  /* Space, radius, hit sizes (in unzoomed px; the floors are real px) */
   --tt-s1: 4px; --tt-s2: 8px; --tt-s3: 12px; --tt-s4: 16px; --tt-s5: 24px; --tt-s6: 32px;
   --tt-r-sm: 10px; --tt-r-md: 14px; --tt-r-lg: 20px; --tt-r-pill: 999px;
-  --tt-hit-main: 64px;         /* Start / Stop / Send */
-  --tt-hit: 52px;              /* everyday buttons */
-  --tt-hit-min: 48px;          /* nothing smaller, dialogs included */
+  --tt-hit-main: max(64px, calc(44px / var(--tt-ui-scale)));  /* Start / Stop / Send: at least 44 px on screen */
+  --tt-hit: max(52px, calc(40px / var(--tt-ui-scale)));       /* everyday buttons: at least 40 px */
+  --tt-hit-min: max(48px, calc(36px / var(--tt-ui-scale)));   /* nothing smaller: at least 36 px */
 
   /* Safe areas (notch, home indicator) */
-  --tt-safe-top: max(env(safe-area-inset-top), 12px);
-  --tt-safe-bottom: max(env(safe-area-inset-bottom), 12px);
-  --tt-safe-left: env(safe-area-inset-left, 0px);
-  --tt-safe-right: env(safe-area-inset-right, 0px);
-  --tt-gutter-l: max(16px, var(--tt-safe-left));
-  --tt-gutter-r: max(16px, var(--tt-safe-right));
+  /* Divided by the zoom so the notch and home indicator stay clear at any size. */
+  --tt-safe-top: max(calc(env(safe-area-inset-top, 0px) / var(--tt-ui-scale)), 12px);
+  --tt-safe-bottom: max(calc(env(safe-area-inset-bottom, 0px) / var(--tt-ui-scale)), 12px);
+  --tt-safe-left: calc(env(safe-area-inset-left, 0px) / var(--tt-ui-scale));
+  --tt-safe-right: calc(env(safe-area-inset-right, 0px) / var(--tt-ui-scale));
+  --tt-gutter-l: max(calc(12px / var(--tt-ui-scale)), var(--tt-safe-left));
+  --tt-gutter-r: max(calc(12px / var(--tt-ui-scale)), var(--tt-safe-right));
 }
 
 /* High contrast ("bright hall"): Settings › Display, or the system setting */
@@ -217,11 +224,11 @@ html, body { height: 100%; margin: 0; }
 .tt .plan-block { font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--tt-text); white-space: nowrap; }
 .tt .plan-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--tt-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tt .plan-x {
-  flex: none; width: 48px; height: 48px; margin: -8px 0; border: 0; border-radius: var(--tt-r-pill);
+  flex: none; width: var(--tt-hit-min); height: var(--tt-hit-min); margin: -8px 0; border: 0; border-radius: var(--tt-r-pill);
   background: transparent; color: var(--tt-text-2); display: grid; place-items: center;
 }
 .tt .plan-x svg { width: 20px; height: 20px; }
-.tt .plan-x.confirm { width: auto; height: 48px; padding: 0 14px; background: var(--tt-red-fill); color: #fff; font-size: 14px; font-weight: 700; }
+.tt .plan-x.confirm { width: auto; height: var(--tt-hit-min); padding: 0 14px; background: var(--tt-red-fill); color: #fff; font-size: 14px; font-weight: 700; }
 .tt .plan-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding-right: 6px; }
 .tt .plan-line { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; margin-bottom: 2px; white-space: nowrap; }
 .tt .plan-main > .pm-r { min-width: 0; }
@@ -358,7 +365,8 @@ html, body { height: 100%; margin: 0; }
 /* ---------- sheets: Settings / Sessions / Recordings (native <dialog>) ---------- */
 .tt dialog.sheet {
   position: fixed; inset: auto 0 0 0; margin: 0 auto;
-  width: 100%; max-width: 560px; max-height: calc(100dvh - 44px);
+  /* Zoomed (see --tt-ui-scale): sizes from the viewport are divided back out. */
+  width: calc(100vw / var(--tt-ui-scale)); max-width: calc(560px / var(--tt-ui-scale)); max-height: calc((100dvh - 44px) / var(--tt-ui-scale));
   padding: 0; border: 0; border-top: 1px solid var(--tt-border); border-radius: 22px 22px 0 0;
   background: var(--tt-bg); color: var(--tt-text); overflow: hidden;
 }
@@ -368,7 +376,7 @@ html, body { height: 100%; margin: 0; }
 .tt .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--tt-surface-3); margin: 8px auto 0; flex: none; }
 .tt .sheet-head { display: flex; align-items: center; gap: 8px; min-height: 60px; padding: 6px max(12px, var(--tt-safe-right)) 8px max(20px, var(--tt-safe-left)); border-bottom: 1px solid var(--tt-border); flex: none; }
 .tt .sheet-head h2 { flex: 1; margin: 0; font-size: var(--tt-fs-title); font-weight: 800; }
-.tt .sheet-head .back { width: 48px; height: 48px; margin-left: -12px; border: 0; background: transparent; border-radius: 50%; display: grid; place-items: center; }
+.tt .sheet-head .back { width: var(--tt-hit-min); height: var(--tt-hit-min); margin-left: -12px; border: 0; background: transparent; border-radius: 50%; display: grid; place-items: center; }
 .tt .sheet-head .back svg { width: 24px; height: 24px; }
 .tt .sheet-body { padding: 16px var(--tt-gutter-r) 32px var(--tt-gutter-l); display: flex; flex-direction: column; gap: 22px; overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; }
 .tt .sheet-intro { margin: 0; font-size: 15px; color: var(--tt-text-2); }
@@ -390,7 +398,7 @@ html, body { height: 100%; margin: 0; }
 .tt.hc .sw { background: #000; box-shadow: inset 0 0 0 2px #fff; }
 .tt.hc .sw:checked { background: var(--tt-good); box-shadow: none; }
 .tt .stepper { display: flex; align-items: center; gap: 4px; flex: none; }
-.tt .stepper button { width: 48px; height: 48px; border: 0; border-radius: 12px; background: var(--tt-surface-2); font-size: 24px; font-weight: 700; display: grid; place-items: center; }
+.tt .stepper button { width: var(--tt-hit-min); height: var(--tt-hit-min); border: 0; border-radius: 12px; background: var(--tt-surface-2); font-size: 24px; font-weight: 700; display: grid; place-items: center; }
 .tt .stepper input { width: 64px; height: 48px; text-align: center; font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; background: transparent; border: 0; -moz-appearance: textfield; }
 .tt .stepper input::-webkit-inner-spin-button, .tt .stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .tt .seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--tt-surface-2); flex: none; }
@@ -484,3 +492,6 @@ html, body { height: 100%; margin: 0; }
 .tt .sheet-body.tight { gap: 14px; }
 .tt .sheet-foot.stacked { display: flex; flex-direction: column; gap: 12px; }
 .tt .scard > .part, .tt .scard > .btn.danger { width: 100%; }
+
+/* ---------- UI size (see --tt-ui-scale) ---------- */
+.tt .intro, .tt .hud, .tt .toast, .tt .panel, .tt dialog.sheet { zoom: var(--tt-ui-scale); }
