@@ -275,7 +275,8 @@ const isActive = () => state === 'learning' || state === 'armed' || state === 't
 function renderLayout() {
   const setupEmpty = state === 'setup' && !counter.laps.length;
   els.hud.classList.toggle('compact', setupEmpty);
-  els.setupHint.hidden = !setupEmpty;
+  hintWanted = setupEmpty;
+  els.setupHint.hidden = !setupEmpty || hintOverMarkers;
   // The lap row (Undo + chips) appears with the first lap.
   els.lapStrip.hidden = !els.summary.hidden || !counter.laps.length;
   els.planStrip.hidden = !plan || !els.summary.hidden;
@@ -405,7 +406,9 @@ function onFrame(now, meta) {
     if (state === 'learning' && !detector.learning) setState(counter.startTime === null ? 'armed' : 'timing');
     if (hit !== null) onCrossing(hit);
   }
-  drawOverlay();
+  // In Set up nothing on the overlay changes between frames (no detector), so
+  // it is only redrawn on a drag, a resize or a state change.
+  if (detector) drawOverlay();
   scheduleFrame();
 }
 
@@ -715,8 +718,25 @@ function drawOverlay() {
   octx.beginPath(); octx.moveTo(a.x, a.y); octx.lineTo(b.x, b.y); octx.stroke();
 
   const editable = state === 'setup';
-  drawHandle(a, 1, 'Top of track', editable, W);
-  drawHandle(b, 2, 'Inner edge', editable, W);
+  if (editable) keepHintOffMarkers(Math.min(a.y, b.y));
+  chips.top = drawHandle(a, 1, 'Top of track', editable, W);
+  chips.inner = drawHandle(b, 2, 'Inner edge', editable, W);
+}
+
+// The Set up hint card sits under the status card. When a ring (or its label)
+// would be underneath it, the card steps aside so the ring stays visible; it
+// comes back once both rings are below it. Its bottom edge is measured only
+// when it is showing and cached, so drawing never forces a layout.
+let hintWanted = false, hintOverMarkers = false, hintBottom = 0;
+function keepHintOffMarkers(topY) {
+  if (!hintWanted) return;
+  if (!els.setupHint.hidden) hintBottom = els.setupHint.offsetTop + els.setupHint.offsetHeight;
+  if (!hintBottom) return;
+  const over = topY - 34 < hintBottom + 6;
+  if (over !== hintOverMarkers) {
+    hintOverMarkers = over;
+    els.setupHint.hidden = over;
+  }
 }
 
 // Overlay colours come from the CSS tokens, read once (and again when the
@@ -734,7 +754,7 @@ function drawHandle(p, n, label, editable, W) {
     octx.beginPath(); octx.arc(p.x, p.y, 6, 0, Math.PI * 2);
     octx.fillStyle = '#fff'; octx.fill();
     octx.lineWidth = 2; octx.strokeStyle = '#0a1622'; octx.stroke();
-    return;
+    return null;
   }
   // Halo r=30 marks the drag target; the ring is hollow-ish so the black line shows through.
   octx.globalAlpha = 0.7;
@@ -750,45 +770,64 @@ function drawHandle(p, n, label, editable, W) {
   octx.fillText(String(n), p.x, p.y + 1);
   // Label chip beside the marker (on the left when it would run off screen).
   octx.font = '700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  const w = octx.measureText(label).width + 20, h = 28;
+  const w = octx.measureText(label).width + 33, h = 28;
   const x = p.x + 38 + w > W - 4 ? p.x - 38 - w : p.x + 38;
   const y = p.y - h / 2;
   octx.beginPath();
   if (octx.roundRect) octx.roundRect(x, y, w, h, 8); else octx.rect(x, y, w, h);
   octx.fillStyle = 'rgba(10,22,34,0.92)'; octx.fill();
   octx.lineWidth = 1; octx.strokeStyle = 'rgba(255,255,255,0.25)'; octx.stroke();
+  // Grip dots: the label is a handle too, so a finger on it leaves the ring in view.
+  octx.fillStyle = 'rgba(255,255,255,0.55)';
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) octx.fillRect(x + 9 + j * 5, p.y - 6 + i * 5, 2.5, 2.5);
   octx.fillStyle = '#fff';
   octx.textAlign = 'left';
-  octx.fillText(label, x + 10, p.y + 1);
+  octx.fillText(label, x + 23, p.y + 1);
+  return { x, y, w, h };
 }
 
-let dragging = null;
+// A ring can be dragged by the ring itself or by its label chip. The grab
+// offset is kept, so the ring moves with the finger without jumping under it.
+const chips = { top: null, inner: null };
+let dragging = null, grab = { x: 0, y: 0 };
+const onChip = (c, pt) => c && pt.x > c.x - 8 && pt.x < c.x + c.w + 8 && pt.y > c.y - 10 && pt.y < c.y + c.h + 10;
 els.overlay.addEventListener('pointerdown', (e) => {
   if (state !== 'setup') return;
   const r = contentRect();
   const pt = { x: e.offsetX, y: e.offsetY };
-  for (const key of ['top', 'inner']) {
-    const s = toScreen(settings.line[key], r);
-    if (Math.hypot(s.x - pt.x, s.y - pt.y) < 36) {
-      dragging = key;
-      els.overlay.setPointerCapture(e.pointerId);
-      return;
-    }
+  // Rings first (closest wins), then the labels.
+  let key = null, best = 36;
+  for (const k of ['top', 'inner']) {
+    const s = toScreen(settings.line[k], r);
+    const d = Math.hypot(s.x - pt.x, s.y - pt.y);
+    if (d < best) { best = d; key = k; }
   }
+  if (!key) key = ['top', 'inner'].find((k) => onChip(chips[k], pt)) || null;
+  if (!key) return;
+  const s = toScreen(settings.line[key], r);
+  grab = { x: pt.x - s.x, y: pt.y - s.y };
+  dragging = key;
+  els.overlay.setPointerCapture(e.pointerId);
 });
 els.overlay.addEventListener('pointermove', (e) => {
   if (!dragging) return;
   const r = contentRect();
   settings.line[dragging] = {
-    x: Math.min(1, Math.max(0, (e.offsetX - r.x) / r.w)),
-    y: Math.min(1, Math.max(0, (e.offsetY - r.y) / r.h)),
+    x: Math.min(1, Math.max(0, (e.offsetX - grab.x - r.x) / r.w)),
+    y: Math.min(1, Math.max(0, (e.offsetY - grab.y - r.y) / r.h)),
   };
   drawOverlay();
 });
 const endDrag = () => { if (dragging) { dragging = null; save(); } };
 els.overlay.addEventListener('pointerup', endDrag);
 els.overlay.addEventListener('pointercancel', endDrag);
-window.addEventListener('resize', drawOverlay);
+window.addEventListener('resize', () => {
+  // Measure the hint again at the new size.
+  hintBottom = 0; hintOverMarkers = false; els.setupHint.hidden = !hintWanted;
+  drawOverlay();
+});
+els.video.addEventListener('resize', drawOverlay);
+els.video.addEventListener('loadedmetadata', drawOverlay);
 
 function detectorTuning() {
   // "Count single riders" turns off the team check (for solo efforts).
