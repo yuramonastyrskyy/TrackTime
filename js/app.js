@@ -166,7 +166,8 @@ function renderPlan() {
   if (els.planSwatch.className !== sw) els.planSwatch.className = sw;
   els.planSwatch.hidden = !t.swatch;
   setText(els.planWhere, t.line);
-  els.planTarget.hidden = t.rest;
+  els.planTarget.hidden = !t.target;
+  els.planMain.classList.toggle('solo', !t.target);
   els.planTarget.classList.toggle('ramp', t.ramp);
   setPlanNumber(els.planTarget, t.target, t.target ? 's' : '');
   setPlanNumber(els.planLeft, t.left, t.leftUnit);

@@ -223,12 +223,20 @@ html, body { height: 100%; margin: 0; }
 .tt .plan-x svg { width: 20px; height: 20px; }
 .tt .plan-x.confirm { width: auto; height: 48px; padding: 0 14px; background: var(--tt-red-fill); color: #fff; font-size: 14px; font-weight: 700; }
 .tt .plan-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding-right: 6px; }
-.tt .plan-line { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+.tt .plan-line { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; margin-bottom: 2px; white-space: nowrap; }
+.tt .plan-main > .pm-r { min-width: 0; }
 .tt .swatch { width: 26px; height: 6px; border-radius: 3px; flex: none; }
 .tt .sw-red { background: var(--tt-red); }
 .tt .sw-blue { background: var(--tt-blue); }
 .tt .sw-any { background: linear-gradient(90deg, var(--tt-red) 0 50%, var(--tt-blue) 50% 100%); }
 .tt .sw-rest { background: transparent; box-shadow: inset 0 0 0 2px var(--tt-text-2); }
+.tt .sw-corridor { background: linear-gradient(to bottom, var(--tt-blue) 0 50%, var(--tt-red) 50% 100%); }
+.tt .sw-above { background: linear-gradient(to bottom, var(--tt-text-2) 0 50%, var(--tt-blue) 50% 100%); }
+.tt .sw-none { background: var(--tt-text-2); }
+/* A block with a line but no target: the line takes the target's place */
+.tt .plan-main.solo { align-items: center; }
+.tt .plan-main.solo .plan-line { font-size: 26px; font-weight: 800; line-height: 1.1; margin: 0; }
+.tt .plan-main.solo .swatch { width: 30px; height: 8px; border-radius: 4px; }
 .tt .plan-target { font-size: var(--tt-fs-display); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tt .plan-target.ramp { font-size: 28px; }
 .tt .plan-target small, .tt .plan-left small { font-size: 17px; font-weight: 700; color: var(--tt-text-2); margin-left: 4px; }
