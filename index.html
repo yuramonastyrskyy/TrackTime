@@ -15,141 +15,280 @@
   <link rel="stylesheet" href="styles.css">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
-<body>
+<body class="tt">
+  <!-- Icons, drawn once and reused with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-setup" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></symbol>
+      <symbol id="i-clear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V6.5a1.5 1.5 0 0 1 3 0V11M10 10V4.5a1.5 1.5 0 0 1 3 0V10M13 10V5.5a1.5 1.5 0 0 1 3 0V12M16 9.5a1.5 1.5 0 0 1 3 0V15a7 7 0 0 1-7 7h-.5a6 6 0 0 1-5-2.7L4 15.5a1.6 1.6 0 0 1 2.6-1.8L7 14.5"/></symbol>
+      <symbol id="i-wait" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12M6 22h12M7 2v4l5 6 5-6V2M7 22v-4l5-6 5 6v4"/></symbol>
+      <symbol id="i-timing" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="14" r="8"/><path d="M12 14V9.5M9.5 2h5M12 2v4M19 6.5l1.5-1.5"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+      <symbol id="i-dot" viewBox="0 0 14 14"><circle cx="7" cy="7" r="7" fill="currentColor"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.5 3 3 6-6.5"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></symbol>
+      <symbol id="i-film" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="13" height="12" rx="2"/><path d="m15.5 10 6-3.5v11l-6-3.5"/></symbol>
+      <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+      <symbol id="i-cam-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 20 20M9 5h6l2 3h3a2 2 0 0 1 2 2v8M17.8 20H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2"/><path d="M10 10.5a3 3 0 0 0 3.8 4.4"/></symbol>
+      <symbol id="i-logo" viewBox="0 0 34 34" fill="none" stroke-linecap="round"><path d="M17 3v28" stroke="#f4f1ea" stroke-width="4"/><path d="M5 12h24" stroke="#e5484d" stroke-width="3"/><path d="M5 22h24" stroke="#3e9bff" stroke-width="3"/></symbol>
+      <symbol id="i-markers" viewBox="0 0 40 60" fill="none" stroke-linecap="round"><path d="M20 10v40" stroke="#3e9bff" stroke-width="3"/><path d="M20 50v8" stroke="#f5c84c" stroke-width="3" stroke-dasharray="3 3"/><circle cx="20" cy="10" r="8" stroke="#f4f1ea" stroke-width="3"/><circle cx="20" cy="50" r="8" stroke="#f4f1ea" stroke-width="3"/></symbol>
+    </defs>
+  </svg>
+
   <main id="stage" class="stage">
     <video id="video" playsinline muted autoplay hidden></video>
     <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
 
     <section id="intro" class="intro">
-      <h1>TrackTime</h1>
-      <p>Put the phone on a tripod at the edge of the track, lined up with the finish line, so the white line runs down the middle of the picture.</p>
-      <ol>
-        <li>Drag the two markers onto the finish line: one where it meets the top of the track, one at the inner edge.</li>
-        <li>Connect the Bluetooth speaker.</li>
-        <li>Tap <strong>Start timing</strong> while the line is clear.</li>
+      <div class="brand">
+        <div class="logo"><svg aria-hidden="true"><use href="#i-logo"/></svg></div>
+        <div>
+          <h1>TrackTime</h1>
+          <p class="tagline">Lap times, spoken at the line</p>
+        </div>
+      </div>
+      <div class="illus" aria-hidden="true">
+        <svg viewBox="0 0 358 196" preserveAspectRatio="xMidYMid slice">
+          <rect width="358" height="196" fill="#12263a"/>
+          <path d="M-20 196 C 80 120, 220 70, 380 40 L 380 120 C 240 140, 120 170, 60 196 Z" fill="#c69157" opacity=".55"/>
+          <path d="M-20 196 C 80 120, 220 70, 380 40" stroke="#3e9bff" stroke-width="3" fill="none"/>
+          <path d="M20 196 C 110 140, 240 100, 380 78" stroke="#e5484d" stroke-width="3" fill="none"/>
+          <path d="M60 196 C 120 170, 240 140, 380 120" stroke="#3e9bff" stroke-width="10" fill="none" opacity=".35"/>
+          <path d="M206 18 L 170 196" stroke="#f4f1ea" stroke-width="10"/>
+          <path d="M206 18 L 170 196" stroke="#0a1622" stroke-width="2.5"/>
+          <g transform="translate(276 92)">
+            <path d="M0 22 L -16 96 M0 22 L 16 96 M0 22 L 0 96" stroke="#9fb3c6" stroke-width="3" stroke-linecap="round"/>
+            <rect x="-13" y="-22" width="26" height="46" rx="5" fill="#0a1622" stroke="#f4f1ea" stroke-width="3"/>
+            <circle cx="0" cy="-12" r="3.5" fill="#3e9bff"/>
+          </g>
+          <path d="M262 74 L 206 70" stroke="#f5c84c" stroke-width="2" stroke-dasharray="4 4"/>
+        </svg>
+      </div>
+      <p class="lead">Put the phone on a tripod at the edge of the track, lined up with the finish line, so the white line runs down the middle of the picture.</p>
+      <ol class="steps">
+        <li><span class="sn">1</span><span>Drag the two markers onto the finish line: one where it meets the top of the track, one at the inner edge.</span></li>
+        <li><span class="sn">2</span><span>Connect the Bluetooth speaker.</span></li>
+        <li><span class="sn">3</span><span>Tap <strong>Start timing</strong> while the line is clear.</span></li>
       </ol>
-      <button id="cameraBtn" class="btn primary" type="button">Turn on camera</button>
-      <p id="cameraError" class="error" role="alert" hidden></p>
+      <div class="spacer"></div>
+      <div id="cameraError" class="err-card" role="alert" hidden>
+        <svg aria-hidden="true"><use href="#i-cam-off"/></svg>
+        <div><strong id="cameraErrorTitle">The camera is off</strong><p id="cameraErrorText"></p></div>
+      </div>
+      <button id="cameraBtn" class="btn main primary full" type="button">Turn on camera</button>
     </section>
 
-    <header class="hud" id="hud" hidden>
-      <div class="status-row">
-        <span id="status" class="pill">Set up</span>
-        <span id="fps" class="fps"></span>
+    <header class="hud compact" id="hud" hidden>
+      <div class="ops" id="ops">
+        <span id="fps"></span>
         <span id="recInfo" class="rec" hidden></span>
-        <span id="linkPill" class="fps" hidden></span>
+        <span id="linkPill" hidden></span>
       </div>
-      <div class="last">
-        <span class="label">Last lap</span>
-        <span id="lastLap" class="big">--.-</span>
-        <span id="lapInfo" class="sub"></span>
+      <div id="status" class="status st-setup" role="status">
+        <svg aria-hidden="true"><use id="statusIcon" href="#i-setup"/></svg>
+        <span id="statusLabel" class="st-label">Set up</span>
+        <span id="statusSteps" class="st-steps" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></span>
+      </div>
+      <div id="setupHint" class="hint">
+        <svg aria-hidden="true"><use href="#i-markers"/></svg>
+        <p><strong>Drag the two markers onto the finish line</strong>One where it meets the top of the track, one at the inner edge.</p>
+      </div>
+      <div class="board">
+        <span class="lap-label">Last lap</span>
+        <span id="lastLap" class="lastlap empty" aria-live="polite">--.-</span>
+        <div class="lap-row">
+          <span id="lapTag" class="tag" hidden></span>
+          <span id="lapInfo" class="lapinfo"></span>
+        </div>
       </div>
     </header>
 
     <p id="toast" class="toast" role="status" hidden></p>
 
     <footer class="panel" id="panel" hidden>
+      <section id="summary" class="summary" aria-label="Session summary" hidden>
+        <div class="sum-head"><b>Session done</b><span id="sumMeta"></span></div>
+        <div class="stats">
+          <div class="stat"><div class="k">Best</div><div id="sumBest" class="v"></div></div>
+          <div class="stat"><div class="k">Average</div><div id="sumAvg" class="v"></div></div>
+          <div class="stat"><div id="sumThirdK" class="k">On target</div><div id="sumThird" class="v"></div></div>
+        </div>
+        <div id="sumBars" class="bars" aria-hidden="true"></div>
+      </section>
+
       <section id="planStrip" class="plan" aria-label="Plan" hidden>
         <div class="plan-top">
-          <strong id="planName" class="plan-name"></strong>
-          <button id="planClose" class="plan-x" type="button" aria-label="Close plan">×</button>
-        </div>
-        <div class="plan-row">
           <span id="planBlock" class="plan-block"></span>
-          <span id="planLeft" class="plan-left"></span>
+          <span id="planName" class="plan-name"></span>
+          <button id="planClose" class="plan-x" type="button" aria-label="Close plan"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
         </div>
+        <div id="planMain" class="plan-main">
+          <div>
+            <div class="plan-line"><i id="planSwatch" class="swatch"></i><span id="planWhere"></span></div>
+            <div id="planTarget" class="plan-target"></div>
+          </div>
+          <div class="pm-r">
+            <div id="planLeft" class="plan-left"></div>
+            <div id="planSub" class="plan-sub"></div>
+          </div>
+        </div>
+        <div id="planDone" class="plan-done" hidden><svg aria-hidden="true"><use href="#i-check"/></svg>Plan done<span id="planDoneSub"></span></div>
         <div id="planNext" class="plan-next"></div>
       </section>
-      <ol id="laps" class="laps" aria-label="Lap times"></ol>
-      <div class="actions">
-        <button id="startBtn" class="btn primary" type="button">Start timing</button>
-        <button id="recBtn" class="btn recbtn" type="button">Record + time</button>
-        <button id="markBtn" class="btn mark" type="button" hidden>Mark</button>
-        <button id="undoBtn" class="btn" type="button" disabled>Undo lap</button>
-        <button id="settingsBtn" class="btn" type="button" aria-expanded="false" aria-controls="settings">Settings</button>
-        <button id="sendBtn" class="btn send wide" type="button" hidden>Send to Pacemaker</button>
+
+      <div id="lapStrip" class="lap-strip" hidden>
+        <button id="undoBtn" class="undo" type="button" disabled>
+          <svg aria-hidden="true"><use href="#i-undo"/></svg>
+          <span id="undoLabel">Undo</span>
+          <small id="undoSub"></small>
+        </button>
+        <ol id="laps" class="laps" aria-label="Lap times, newest first"></ol>
       </div>
+
+      <button id="sendBtn" class="btn main send full" type="button" hidden>Send to Pacemaker</button>
       <p id="sendNote" class="note" role="status" hidden></p>
+
+      <div id="actions" class="actions">
+        <button id="startBtn" class="btn main primary full" type="button">Start timing</button>
+        <button id="recBtn" class="btn rec" type="button"><svg aria-hidden="true"><use href="#i-dot"/></svg>Record + time</button>
+        <button id="settingsBtn" class="btn ghost" type="button" aria-label="Settings" aria-expanded="false" aria-controls="settings"><svg aria-hidden="true"><use href="#i-gear"/></svg><span class="btn-label">Settings</span></button>
+      </div>
+      <button id="markBtn" class="btn mark full" type="button" hidden>Mark</button>
     </footer>
 
-    <dialog id="settings" class="settings">
-      <form method="dialog">
-        <h2>Settings</h2>
-        <label class="field">
-          <span>Ignore the line after each lap</span>
-          <span class="inline"><input id="ignoreSec" type="number" min="3" max="60" step="1" inputmode="numeric"> seconds</span>
-          <small>Long enough to skip the team behind, shorter than your fastest lap.</small>
-        </label>
-        <label class="field">
-          <span>Decimals</span>
-          <select id="decimals"><option value="1">One (17.4)</option><option value="2">Two (17.43)</option></select>
-        </label>
-        <label class="field">
-          <span>Voice</span>
-          <select id="voice">
-            <option value="auto">Automatic</option>
-            <option value="phone">Phone voice</option>
-            <option value="clips">Recorded clips</option>
-          </select>
-          <small>Use recorded clips if you hear nothing inside Telegram.</small>
-        </label>
-        <label class="field check">
-          <input id="countSingles" type="checkbox">
-          <span>Count single riders</span>
-        </label>
-        <small class="hint">Off: only a team (several riders in a line) starts a lap, so lone riders and people walking past the camera are ignored. Turn on for solo efforts.</small>
-        <label class="field check">
-          <input id="recordSound" type="checkbox">
-          <span>Record sound with the video</span>
-        </label>
-        <small class="hint">Catches the coach calling times. On iPhone it can make the Bluetooth speaker quieter, so try it first.</small>
-        <label class="field check">
-          <input id="restBetweenLaps" type="checkbox" checked>
-          <span>Rest between laps</span>
-        </label>
-        <small class="hint">On: after each lap the app stops looking at the line until 1.5 s before the ignore time ends, so the phone stays cooler. The camera and recording keep running.</small>
-        <label class="field check">
-          <input id="sayGap" type="checkbox">
-          <span>Say gap to target</span>
-        </label>
-        <small class="hint">With a Pacemaker plan: after the lap time, says how far it was from the target ("plus 0.3", "minus 0.2"), and "next block" when the plan moves on.</small>
-        <label class="field">
-          <span>Stopwatch code</span>
-          <input id="stopwatchCode" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Off" class="code">
-          <small>Sends each lap to the laptop stopwatch. Find the code there under the tower icon. The phone and the laptop both need internet.</small>
-          <small id="linkStatus" class="hint"></small>
-        </label>
-        <div class="row">
-          <button id="sessionsBtn" class="btn" type="button">Sessions</button>
-          <button id="recordingsBtn" class="btn" type="button">Recordings</button>
+    <dialog id="settings" class="sheet" aria-labelledby="settingsTitle">
+      <form method="dialog" class="sheet-form">
+        <div class="grab"></div>
+        <header class="sheet-head"><h2 id="settingsTitle">Settings</h2></header>
+        <div class="sheet-body">
+          <div class="tiles">
+            <button id="sessionsBtn" class="tile" type="button"><svg aria-hidden="true"><use href="#i-list"/></svg><span><b>Sessions</b><small>Laps, send to Pacemaker</small></span></button>
+            <button id="recordingsBtn" class="tile" type="button"><svg aria-hidden="true"><use href="#i-film"/></svg><span><b>Recordings</b><small>Videos and logs</small></span></button>
+          </div>
+
+          <section class="group" aria-labelledby="gTiming">
+            <h3 id="gTiming" class="group-h">Timing</h3>
+            <div class="card">
+              <div class="row">
+                <span class="lbl"><b id="ignoreLbl">Ignore the line after each lap</b><small>Seconds. Long enough to skip the team behind, shorter than your fastest lap.</small></span>
+                <span class="stepper">
+                  <button id="ignoreDown" type="button" aria-label="Less">−</button>
+                  <input id="ignoreSec" type="number" min="3" max="60" step="1" inputmode="numeric" aria-labelledby="ignoreLbl">
+                  <button id="ignoreUp" type="button" aria-label="More">+</button>
+                </span>
+              </div>
+              <div class="row">
+                <span class="lbl"><b id="decimalsLbl">Decimals</b></span>
+                <span id="decimals" class="seg" role="group" aria-labelledby="decimalsLbl">
+                  <button type="button" data-dec="1" aria-pressed="true">17.4</button>
+                  <button type="button" data-dec="2" aria-pressed="false">17.43</button>
+                </span>
+              </div>
+              <label class="row">
+                <span class="lbl"><b>Count single riders</b><small>Off: only a team (several riders in a line) starts a lap, so lone riders and people walking past are ignored. Turn on for solo efforts.</small></span>
+                <input id="countSingles" class="sw" type="checkbox">
+              </label>
+              <label class="row">
+                <span class="lbl"><b>Rest between laps</b><small>After each lap the app stops looking at the line until 1.5 s before the ignore time ends, so the phone stays cooler. Camera and recording keep running.</small></span>
+                <input id="restBetweenLaps" class="sw" type="checkbox" checked>
+              </label>
+            </div>
+          </section>
+
+          <section class="group" aria-labelledby="gVoice">
+            <h3 id="gVoice" class="group-h">Voice</h3>
+            <div id="voice" class="card" role="radiogroup" aria-labelledby="gVoice">
+              <label class="opt"><input type="radio" name="voice" value="auto"><span>Automatic</span></label>
+              <label class="opt"><input type="radio" name="voice" value="phone"><span>Phone voice</span></label>
+              <label class="opt"><input type="radio" name="voice" value="clips"><span>Recorded clips<small>Use these if you hear nothing inside Telegram.</small></span></label>
+            </div>
+            <div class="card">
+              <label class="row">
+                <span class="lbl"><b>Say gap to target</b><small>With a Pacemaker plan: after the time, says how far it was from the target ("plus 0.3") and "next block" when the plan moves on.</small></span>
+                <input id="sayGap" class="sw" type="checkbox">
+              </label>
+            </div>
+            <button id="testVoiceBtn" class="btn" type="button">Test voice</button>
+          </section>
+
+          <section class="group" aria-labelledby="gLink">
+            <h3 id="gLink" class="group-h">Laptop stopwatch</h3>
+            <div class="card">
+              <div class="row stack">
+                <div class="row" style="padding:0;min-height:0;border:0">
+                  <span class="lbl"><b id="codeLbl">Stopwatch code</b><small>Sends each lap to the laptop stopwatch. Find the code there under the tower icon. Both need internet.</small></span>
+                  <input id="stopwatchCode" class="code" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Off" aria-labelledby="codeLbl">
+                </div>
+                <div id="linkStatus" class="linkstat" hidden><i></i><span id="linkStatusText"></span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="group" aria-labelledby="gLaps">
+            <h3 id="gLaps" class="group-h">Laps and markers</h3>
+            <div class="btn-grid">
+              <button id="copyBtn" class="btn" type="button">Copy lap times</button>
+              <button id="clearBtn" class="btn danger" type="button">Clear laps</button>
+              <button id="resetMarkersBtn" class="btn full" type="button">Reset markers</button>
+            </div>
+            <p id="copyNote" class="note" role="status" hidden></p>
+          </section>
+
+          <section class="group" aria-labelledby="gDisplay">
+            <h3 id="gDisplay" class="group-h">Display</h3>
+            <div class="card">
+              <label class="row">
+                <span class="lbl"><b>High contrast</b><small>Black background and filled lap colours, for a bright hall.</small></span>
+                <input id="highContrast" class="sw" type="checkbox">
+              </label>
+            </div>
+          </section>
+
+          <section class="group" aria-labelledby="gTesting">
+            <h3 id="gTesting" class="group-h">Testing <span class="badge">Record + time</span></h3>
+            <div class="card">
+              <label class="row">
+                <span class="lbl"><b>Record sound with the video</b><small>Catches the coach calling times. On iPhone it can make the Bluetooth speaker quieter, so try it first.</small></span>
+                <input id="recordSound" class="sw" type="checkbox">
+              </label>
+            </div>
+          </section>
         </div>
-        <div class="row">
-          <button id="testVoiceBtn" class="btn" type="button">Test voice</button>
-          <button id="resetMarkersBtn" class="btn" type="button">Reset markers</button>
-        </div>
-        <div class="row">
-          <button id="copyBtn" class="btn" type="button">Copy lap times</button>
-          <button id="clearBtn" class="btn danger" type="button">Clear laps</button>
-        </div>
-        <p id="copyNote" class="note" hidden></p>
-        <button class="btn primary" value="close">Done</button>
+        <footer class="sheet-foot"><button class="btn main primary full" value="close">Done</button></footer>
       </form>
     </dialog>
-    <dialog id="recordings" class="settings">
-      <form method="dialog">
-        <h2>Recordings</h2>
-        <p class="hint">Save each video part and the log to the phone or share them. Recordings stay in the app until you delete them.</p>
-        <div id="recList" class="reclist"></div>
-        <p id="recStorage" class="hint"></p>
-        <button class="btn primary" value="close">Done</button>
+
+    <dialog id="sessions" class="sheet" aria-labelledby="sessionsTitle">
+      <form method="dialog" class="sheet-form">
+        <div class="grab"></div>
+        <header class="sheet-head">
+          <button class="back" type="button" data-back aria-label="Back to Settings"><svg aria-hidden="true"><use href="#i-back"/></svg></button>
+          <h2 id="sessionsTitle">Sessions</h2>
+        </header>
+        <div class="sheet-body">
+          <p class="sheet-intro">Every timing session is kept here, newest first. Send one to Pacemaker to check it against the plan and save it there.</p>
+          <div id="sessList" class="list"></div>
+        </div>
+        <footer class="sheet-foot"><button class="btn main primary full" value="close">Done</button></footer>
       </form>
     </dialog>
-    <dialog id="sessions" class="settings">
-      <form method="dialog">
-        <h2>Sessions</h2>
-        <p class="hint">Every timing session is kept here, newest first. Send one to Pacemaker to check it against the plan and save it there.</p>
-        <div id="sessList" class="reclist"></div>
-        <button class="btn primary" value="close">Done</button>
+
+    <dialog id="recordings" class="sheet" aria-labelledby="recordingsTitle">
+      <form method="dialog" class="sheet-form">
+        <div class="grab"></div>
+        <header class="sheet-head">
+          <button class="back" type="button" data-back aria-label="Back to Settings"><svg aria-hidden="true"><use href="#i-back"/></svg></button>
+          <h2 id="recordingsTitle">Recordings</h2>
+        </header>
+        <div class="sheet-body">
+          <p class="sheet-intro">Save each video part and the log to the phone or share them. Recordings stay in the app until you delete them.</p>
+          <div id="recList" class="list"></div>
+          <div id="recStorage" class="meter" hidden><span id="recStorageText"></span><div class="track"><div id="recStorageFill" class="fill"></div></div></div>
+        </div>
+        <footer class="sheet-foot"><button class="btn main primary full" value="close">Done</button></footer>
       </form>
     </dialog>
   </main>
