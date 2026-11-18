@@ -261,25 +261,28 @@ function swatchFor(block) {
  */
 export function boardParts(plan, p) {
   if (p.done) {
-    return { done: true, block: `${p.total} of ${p.total} blocks`, next: '' };
+    return { done: true, block: `Block ${p.total} of ${p.total}`, doneSub: `${p.total} of ${p.total} blocks`, next: '' };
   }
   const b = p.block;
   const rest = b.kind === 'rest';
-  let target = '', ramp = false;
+  let target = rest ? 'Easy' : '', ramp = false;
   if (!rest) {
     if (b.from !== undefined && !p.started) { target = `${b.from.toFixed(1)} → ${b.to.toFixed(1)}`; ramp = true; }
     else if (p.target !== null) target = p.target.toFixed(1);
   }
   const line = rest ? 'Rest' : (b.where ? whereText(b.where) : 'Ride');
-  let left, leftUnit;
-  if (p.leftMs !== null) { left = formatClock(p.leftMs); leftUnit = ''; } else {
-    left = String(p.leftLaps); leftUnit = p.leftLaps === 1 ? 'lap' : 'laps';
+  let left, sub;
+  if (p.leftMs !== null) {
+    left = formatClock(p.leftMs);
+    sub = p.started ? 'left in block' : 'starts at first crossing';
+  } else {
+    left = String(p.leftLaps);
+    sub = p.leftLaps === 1 ? 'lap left' : 'laps left';
   }
   return {
     done: false,
     block: `Block ${p.index + 1} of ${p.total}`,
-    line, swatch: swatchFor(b), target, ramp, rest, left, leftUnit,
-    sub: p.started ? 'left in block' : 'starts at first crossing',
+    line, swatch: swatchFor(b), target, unit: target && !rest ? 's' : '', ramp, rest, left, sub,
     next: p.next ? `Next: ${describeBlock(p.next)} · ${blockLength(p.next)}` : 'Last block',
   };
 }
@@ -287,14 +290,14 @@ export function boardParts(plan, p) {
 /** Words and mark for a lap's band tag: "▲ Slow +0.5", "✓ On target", "Break". */
 export function bandTag(result, decimals = 1) {
   if (!result) return null;
-  if (result.break) return { band: 'break', text: 'Break', mark: '' };
+  if (result.break) return { band: 'break', text: 'Break', mark: '–' };
   if (!result.band) return null;
   const g = result.gap;
   const gap = `${g < 0 ? '−' : '+'}${Math.abs(g).toFixed(decimals)}`;
   switch (result.band) {
-    case 'good': return { band: 'good', text: '✓ On target', mark: '✓' };
+    case 'good': return { band: 'good', text: '✓ On target', mark: '' };
     case 'slow': return { band: 'slow', text: `▲ Slow ${gap}`, mark: '▲' };
-    case 'veryslow': return { band: 'veryslow', text: `▲▲ Very slow ${gap}`, mark: '▲▲' };
+    case 'veryslow': return { band: 'veryslow', text: `▲▲ Too slow ${gap}`, mark: '▲▲' };
     case 'fast': return { band: 'fast', text: `▼ Fast ${gap}`, mark: '▼' };
     default: return null;
   }

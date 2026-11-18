@@ -37,6 +37,9 @@ const els = {
   sendBtn: $('sendBtn'), sendNote: $('sendNote'),
   sessionsBtn: $('sessionsBtn'), sessions: $('sessions'), sessList: $('sessList'),
   recordingsBtn: $('recordingsBtn'), recordings: $('recordings'), recList: $('recList'),
+  toastText: $('toastText'), toastIcon: $('toastIcon'), startLabel: $('startLabel'), startIcon: $('startIcon'),
+  sendLabel: $('sendLabel'), sendIcon: $('sendIcon'), sumTitle: $('sumTitle'), cameraBtnLabel: $('cameraBtnLabel'),
+  sessionsSub: $('sessionsSub'), recordingsSub: $('recordingsSub'),
   recStorage: $('recStorage'), recStorageText: $('recStorageText'), recStorageFill: $('recStorageFill'),
 };
 /** Sets text only when it changed, so nothing re-lays out for nothing. */
@@ -120,15 +123,17 @@ function readPlanLink() {
   if (!r) return;
   // Keep the plan for this visit, but take it out of the address bar.
   try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignored */ }
-  if (r.error) { showToast(r.error); return; }
+  if (r.error) { showToast(r.error, 'info'); return; }
   setPlan(r.plan);
   showToast(`Plan loaded: ${r.plan.name}`);
 }
 window.addEventListener('hashchange', readPlanLink);
 
 let toastTimer = null;
-function showToast(text) {
-  els.toast.textContent = text;
+function showToast(text, kind = 'ok') {
+  els.toastText.textContent = text;
+  els.toastIcon.setAttribute('href', kind === 'ok' ? '#i-tick' : '#i-info');
+  els.toastIcon.parentNode.style.color = kind === 'ok' ? '' : 'var(--tt-slow)';
   els.toast.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { els.toast.hidden = true; }, 6000);
@@ -156,7 +161,7 @@ function renderPlan() {
   els.planMain.hidden = t.done;
   els.planDone.hidden = !t.done;
   if (t.done) {
-    setText(els.planDoneSub, '');
+    setText(els.planDoneSub, t.doneSub);
     setText(els.planNext, '');
     els.planNext.hidden = true;
     return;
@@ -169,8 +174,8 @@ function renderPlan() {
   els.planTarget.hidden = !t.target;
   els.planMain.classList.toggle('solo', !t.target);
   els.planTarget.classList.toggle('ramp', t.ramp);
-  setPlanNumber(els.planTarget, t.target, t.target ? 's' : '');
-  setPlanNumber(els.planLeft, t.left, t.leftUnit);
+  setPlanNumber(els.planTarget, t.target, t.unit);
+  setPlanNumber(els.planLeft, t.left, '');
   setText(els.planSub, t.sub);
   setText(els.planNext, t.next);
 }
@@ -180,7 +185,7 @@ function setPlanNumber(el, value, unit) {
   if (el.dataset.v === key) return;
   el.dataset.v = key;
   el.textContent = value;
-  if (unit) { const u = document.createElement('small'); u.textContent = unit; el.append(u); }
+  if (unit) { const u = document.createElement('small'); u.textContent = ` ${unit}`; el.append(u); }
 }
 setInterval(() => { if (plan && !els.panel.hidden && !els.planStrip.hidden) renderPlan(); }, 1000);
 
@@ -203,7 +208,7 @@ const resetPlanClose = () => { els.planClose.classList.remove('confirm'); els.pl
 els.planClose.addEventListener('click', () => {
   const second = arm(els.planClose, () => {
     els.planClose.classList.add('confirm');
-    els.planClose.textContent = 'Tap again to close plan';
+    els.planClose.textContent = 'Tap again to close';
   }, resetPlanClose);
   if (!second) return;
   resetPlanClose();
@@ -252,15 +257,16 @@ function setState(s) {
   [...els.statusSteps.children].forEach((i, k) => i.classList.toggle('on', k < st.step));
   const active = isActive();
   disarm(els.startBtn, () => {});
-  els.startBtn.textContent = active ? (recorder ? 'Stop recording' : 'Stop') : 'Start timing';
+  els.startLabel.textContent = active ? (recorder ? 'Stop recording' : 'Stop') : 'Start timing';
+  els.startIcon.setAttribute('href', active ? '#i-stop' : '#i-play');
   els.startBtn.className = active ? 'btn main stop' : 'btn main primary full';
   els.actions.classList.toggle('timing', active);
   els.recBtn.hidden = active;
-  els.settingsBtn.className = active ? 'btn icon' : 'btn ghost';
+  els.settingsBtn.className = active ? 'btn main icon ghost' : 'btn ghost';
   els.markBtn.hidden = !(active && recorder);
   els.sendBtn.hidden = active || !lastSession?.laps.length;
   if (active) { els.sendNote.hidden = true; els.summary.hidden = true; }
-  renderLayout();
+  renderLaps();
   recorder?.log('state', { detail: s });
   drawOverlay();
 }
@@ -270,7 +276,8 @@ function renderLayout() {
   const setupEmpty = state === 'setup' && !counter.laps.length;
   els.hud.classList.toggle('compact', setupEmpty);
   els.setupHint.hidden = !setupEmpty;
-  els.lapStrip.hidden = !els.summary.hidden || (state === 'setup' && !counter.laps.length);
+  // The lap row (Undo + chips) appears with the first lap.
+  els.lapStrip.hidden = !els.summary.hidden || !counter.laps.length;
   els.planStrip.hidden = !plan || !els.summary.hidden;
 }
 
@@ -321,6 +328,7 @@ function showCameraError(title, msg) {
   els.cameraErrorTitle.textContent = title;
   els.cameraErrorText.textContent = msg;
   els.cameraError.hidden = false;
+  els.cameraBtnLabel.textContent = 'Try the camera again';
 }
 
 // ---------- frame loop ----------
@@ -481,8 +489,8 @@ els.startBtn.addEventListener('click', async () => {
     const label = recorder ? 'Stop recording' : 'Stop';
     const second = arm(els.startBtn, () => {
       els.startBtn.classList.add('armed');
-      els.startBtn.textContent = recorder ? 'Tap again to stop recording' : 'Tap again to stop';
-    }, () => { els.startBtn.classList.remove('armed'); els.startBtn.textContent = label; });
+      els.startLabel.textContent = recorder ? 'Tap again to stop recording' : 'Tap again to stop';
+    }, () => { els.startBtn.classList.remove('armed'); els.startLabel.textContent = label; });
     if (second) stopTiming();
     return;
   }
@@ -524,12 +532,13 @@ function renderSummary() {
   const results = plan ? currentProgress().results : [];
   const s = summarize(laps, results);
   const total = laps.reduce((n, l) => n + l.ms, 0);
-  els.sumMeta.textContent = `${s.count} ${s.count === 1 ? 'lap' : 'laps'} · ${formatDuration(total)}${plan ? ` · ${plan.name}` : ''}`;
-  setStat(els.sumBest, s.best === null ? '–' : formatLap(s.best, dec), s.best === null ? '' : 's');
-  setStat(els.sumAvg, s.average === null ? '–' : formatLap(s.average, dec), s.average === null ? '' : 's');
+  els.sumTitle.textContent = plan ? plan.name : 'This session';
+  els.sumMeta.textContent = `${s.count} ${s.count === 1 ? 'lap' : 'laps'} · ${formatDuration(total)}`;
+  setStat(els.sumBest, s.best === null ? '–' : formatLap(s.best, dec), '');
+  setStat(els.sumAvg, s.average === null ? '–' : formatLap(s.average, dec), '');
   if (s.onTarget) {
     els.sumThirdK.textContent = 'On target';
-    setStat(els.sumThird, String(s.onTarget.good), `/${s.onTarget.of}`);
+    setStat(els.sumThird, String(s.onTarget.good), ` / ${s.onTarget.of}`);
   } else {
     els.sumThirdK.textContent = 'Laps';
     setStat(els.sumThird, String(s.count), '');
@@ -624,7 +633,9 @@ function renderLaps() {
     els.lastLap.className = `lastlap empty${dec === 2 ? ' dp2' : ''}`;
     els.lastLap.textContent = '--.-';
     els.lapTag.hidden = true;
-    els.lapInfo.textContent = counter.startTime === null ? '' : 'Clock started';
+    els.lapInfo.textContent = counter.startTime !== null ? 'Clock started'
+      : state === 'learning' ? 'Learning the empty line…'
+        : state === 'armed' ? 'The first crossing starts the clock.' : '';
     els.laps.replaceChildren();
     return;
   }
@@ -640,7 +651,7 @@ function renderLaps() {
   if (tag) { els.lapTag.className = `tag b-${tag.band}`; els.lapTag.textContent = tag.text; }
   const prev = laps[laps.length - 2];
   const delta = prev ? ` · ${last.ms <= prev.ms ? '−' : '+'}${(Math.abs(last.ms - prev.ms) / 1000).toFixed(dec)}` : '';
-  els.lapInfo.textContent = `Lap ${last.lap} · best ${formatLap(best, dec)}${delta}`;
+  els.lapInfo.textContent = `Lap ${last.lap} · best ${formatLap(best, dec)}${lastResult?.break ? ' · break' : delta}`;
   els.laps.replaceChildren(...laps.slice(-MAX_CHIPS).reverse().map((l, k) => {
     const li = document.createElement('li');
     const r = results[l.lap - 1];
@@ -785,6 +796,19 @@ function detectorTuning() {
 }
 
 // ---------- settings dialog ----------
+/** "24 saved" and "2 · 1.2 GB" under the Sessions and Recordings tiles. */
+async function fillTiles() {
+  try {
+    const list = await store.listTimings();
+    els.sessionsSub.textContent = `${list.length} saved`;
+  } catch { els.sessionsSub.textContent = 'Saved laps'; }
+  try {
+    const recs = (await store.listSessions()).filter((x) => x.id !== recorder?.id);
+    const est = await navigator.storage?.estimate?.();
+    els.recordingsSub.textContent = recs.length
+      ? `${recs.length}${est?.usage ? ` · ${formatBytes(est.usage)}` : ''}` : 'None yet';
+  } catch { els.recordingsSub.textContent = 'Videos and logs'; }
+}
 function fillSettings() {
   els.ignoreSec.value = settings.ignoreSec;
   renderDecimals();
@@ -798,6 +822,7 @@ function fillSettings() {
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
+  fillTiles();
   els.copyNote.hidden = true;
   els.settings.showModal();
   els.settingsBtn.setAttribute('aria-expanded', 'true');
@@ -1056,7 +1081,7 @@ async function openRecordings(highlightId = null, memChunks = null) {
     const files = await sessionFiles(rec, rec.id === highlightId ? memChunks : null).catch(() => []);
     items.push(renderSession(rec, files));
   }
-  els.recList.replaceChildren(...(items.length ? items : [emptyState('i-film', 'No recordings yet', 'Tap Record + time to make one.')]));
+  els.recList.replaceChildren(...(items.length ? items : [emptyState('i-film-lg', 'No recordings yet', 'Tap Record + time to make one.')]));
   try {
     const est = await navigator.storage?.estimate?.();
     els.recStorage.hidden = !est?.quota;
@@ -1089,7 +1114,9 @@ function emptyState(iconId, title, text) {
   d.className = 'empty-state';
   const b = document.createElement('b');
   b.textContent = title;
-  d.append(icon(iconId), b, textP(text, ''));
+  const t = document.createElement('span');
+  t.textContent = text;
+  d.append(icon(iconId), b, t);
   return d;
 }
 function pill(text, cls = '') {
@@ -1125,26 +1152,20 @@ function renderSession(rec, files) {
   const marks = rec.log.events.filter((e) => e.type === 'mark').length;
   const videos = files.filter((f) => f.type.startsWith('video/'));
   const total = videos.reduce((n, f) => n + f.size, 0);
-  const meta = textP(`${Math.round(lastMs / 60000)} min · ${laps} laps · ${marks} marks · ${formatBytes(total)} video`, 'meta');
+  const meta = textP(`${videos.length} ${videos.length === 1 ? 'part' : 'parts'} · ${formatDuration(lastMs)} · ${formatBytes(total)} · ${marks} ${marks === 1 ? 'mark' : 'marks'}${laps ? ` · ${laps} laps` : ''}`, 'meta');
   box.append(h, meta);
-  if (!rec.endedAt) box.append(warnP('Stopped unexpectedly. What was saved before that is here.'));
+  if (!rec.endedAt) box.append(warnP('Stopped unexpectedly. Everything up to then is saved.'));
   for (const p of rec.problems || []) box.append(warnP(p.msg));
-  const list = document.createElement('div');
-  list.className = 'parts';
   for (const f of videos) {
     const part = f.name.match(/part(\d+)/)?.[1];
-    list.append(fileButton(`Save video${part ? ` part ${part}` : ''}`, formatBytes(f.size), [f]));
+    box.append(fileButton(`Save video${part ? ` part ${part}` : ''}`, formatBytes(f.size), [f]));
   }
   const logs = files.filter((f) => !f.type.startsWith('video/'));
-  if (logs.length) list.append(fileButton('Save log, events and setup photo', '', logs));
-  box.append(list);
-  const row = document.createElement('div');
-  row.className = 'btn-row';
-  row.append(deleteButton('Delete this recording', async (del) => {
+  if (logs.length) box.append(fileButton('Save log, events and setup photo', formatBytes(logs.reduce((n, f) => n + f.size, 0)), logs));
+  box.append(deleteButton('Delete this recording', async (del) => {
     del.disabled = true;
     try { await store.deleteSession(rec.id); box.remove(); } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; del.disabled = false; }
   }));
-  box.append(row);
   return box;
 }
 
@@ -1169,7 +1190,7 @@ function fileButton(label, size, files) {
 // Only ever on a tap. No keys or logins: Pacemaker asks the person to check
 // and save the ride.
 const API_OVERRIDE = new URLSearchParams(location.search).get('pmapi'); // e.g. ?pmapi=http://localhost:8787 for testing
-const SEND_FAILED = "Couldn't send. It's saved in Settings > Sessions; try again with signal.";
+const SEND_FAILED = "Couldn't send. It's saved in Settings › Sessions; try again with signal.";
 
 els.sendBtn.addEventListener('click', () => {
   if (lastSession) sendToPacemaker(lastSession, els.sendBtn, els.sendNote);
@@ -1177,38 +1198,63 @@ els.sendBtn.addEventListener('click', () => {
 
 // Button states: idle → .busy "Sending…" → .done "Sent ✓"; on failure the
 // label says "Try sending again" and the note explains.
+const SEND_NOTE_IDLE = 'Checks the laps against the plan and saves them in Pacemaker.';
+const SEND_NOTE_BUSY = 'Keep this screen open for a moment.';
+
+/**
+ * Button states from the design board: idle (icon + "Send to Pacemaker"),
+ * .busy "Sending…" (can't be tapped twice), .done "✓ Sent to Pacemaker" with
+ * a link back, failed = "Try sending again" with the note saying where the
+ * session is kept. The main button has its own label/icon; Sessions cards
+ * use plain text.
+ */
+function setSendBtn(btn, mode, label) {
+  const main = btn === els.sendBtn;
+  btn.classList.toggle('busy', mode === 'busy');
+  btn.classList.toggle('done', mode === 'done');
+  if (main) {
+    els.sendLabel.textContent = label;
+    els.sendIcon.parentNode.style.display = mode === 'busy' ? 'none' : '';
+    els.sendIcon.setAttribute('href', mode === 'done' ? '#i-tick' : '#i-send');
+  } else {
+    btn.textContent = label;
+  }
+}
+function setNote(note, text, kind = '', link = null) {
+  note.className = `note${kind ? ` ${kind}` : ''}`;
+  note.textContent = text;
+  if (link) {
+    const a = document.createElement('a');
+    a.href = link; a.textContent = 'Open in Pacemaker';
+    note.append(' ', a);
+  }
+  note.hidden = false;
+}
+
 async function sendToPacemaker(s, btn, note) {
   btn.disabled = true;
-  btn.classList.remove('done');
-  btn.classList.add('busy');
-  btn.textContent = 'Sending…';
-  note.hidden = true;
+  setSendBtn(btn, 'busy', 'Sending…');
+  setNote(note, SEND_NOTE_BUSY);
   try {
     const answer = await sendSession(s, { api: apiFor(s, API_OVERRIDE) });
     s.sentAt = Date.now();
     s.sent = answer;
     await store.saveTiming(s).catch(() => {});
-    btn.classList.add('done');
-    btn.textContent = 'Sent ✓';
-    note.textContent = 'Sent to Pacemaker.';
-    note.className = note.dataset.base ? `${note.dataset.base} ok` : 'note ok';
-    note.hidden = false;
+    setSendBtn(btn, 'done', 'Sent to Pacemaker');
+    setNote(note, 'Saved there too.', 'ok', answer.web || null);
     openPacemaker(answer);
   } catch {
-    btn.textContent = 'Try sending again';
-    note.textContent = SEND_FAILED;
-    note.className = note.dataset.base ? `${note.dataset.base} err` : 'note err';
-    note.hidden = false;
+    setSendBtn(btn, 'failed', 'Try sending again');
+    setNote(note, SEND_FAILED, 'err');
   } finally {
-    btn.classList.remove('busy');
     btn.disabled = false;
   }
 }
 /** Back to "Send to Pacemaker" when a new session finishes. */
 function resetSendBtn() {
   els.sendBtn.className = 'btn main send full';
-  els.sendBtn.textContent = 'Send to Pacemaker';
-  els.sendNote.hidden = true;
+  setSendBtn(els.sendBtn, 'idle', 'Send to Pacemaker');
+  setNote(els.sendNote, SEND_NOTE_IDLE);
 }
 
 function openPacemaker(answer) {
@@ -1231,7 +1277,7 @@ async function openSessions() {
     return;
   }
   list.sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt));
-  els.sessList.replaceChildren(...(list.length ? list.map(renderTiming) : [emptyState('i-list', 'No sessions yet', 'Every Start timing is kept here.')]));
+  els.sessList.replaceChildren(...(list.length ? list.map(renderTiming) : [emptyState('i-list-lg', 'No sessions yet', 'Every Start timing is kept here.')]));
 }
 
 function renderTiming(s) {
@@ -1239,43 +1285,43 @@ function renderTiming(s) {
   const h = document.createElement('h3');
   h.textContent = new Date(s.startedAt ?? s.createdAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const active = s.id === session?.id;
-  box.append(h, textP(`${s.laps.length} ${s.laps.length === 1 ? 'lap' : 'laps'} · ${formatDuration(sessionDuration(s))}`, 'meta'));
+  box.append(h, textP(`${s.laps.length} ${s.laps.length === 1 ? 'lap' : 'laps'} · ${formatDuration(sessionDuration(s))}${s.plan?.name ? ` · ${s.plan.name}` : ''}`, 'meta'));
   const pills = document.createElement('div');
   pills.className = 'pills';
-  if (active) pills.append(pill('Timing now', 'live'));
-  if (s.sentAt) pills.append(pill('Sent ✓', 'ok'));
-  if (s.plan?.name) pills.append(pill(s.plan.name));
+  if (active) pills.append(pill('● Timing now', 'live'));
+  if (s.sentAt) pills.append(pill('✓ Sent', 'ok'));
+  if (s.plan) pills.append(pill('Plan'));
   if (pills.childElementCount) box.append(pills);
   if (!s.endedAt && !active) box.append(warnP('Stopped unexpectedly. The laps up to then are here.'));
   const row = document.createElement('div');
   row.className = 'btn-row';
   const note = textP('', 'note');
-  note.dataset.base = 'note';
   note.style.textAlign = 'left';
   note.hidden = true;
-  if (!active && s.laps.length) {
-    const send = document.createElement('button');
-    send.type = 'button'; send.className = 'btn sm send';
-    send.textContent = s.sentAt ? 'Send to Pacemaker again' : 'Send to Pacemaker';
-    send.addEventListener('click', () => sendToPacemaker(s, send, note));
-    row.append(send);
-  }
   if (s.sent?.web) {
     const a = document.createElement('a');
-    a.className = 'btn sm'; a.href = s.sent.web; a.textContent = 'Open in Pacemaker';
+    a.className = 'btn sm ghost'; a.href = s.sent.web; a.textContent = 'Open in Pacemaker';
     row.append(a);
+  }
+  if (!active && s.laps.length) {
+    const send = document.createElement('button');
+    send.type = 'button'; send.className = s.sentAt ? 'btn sm ghost' : 'btn sm send';
+    send.textContent = s.sentAt ? 'Send again' : 'Send to Pacemaker';
+    send.addEventListener('click', () => sendToPacemaker(s, send, note));
+    row.append(send);
   }
   if (!active) {
     row.append(deleteButton('Delete', async (del) => {
       del.disabled = true;
       try {
         await store.deleteTiming(s.id);
-        if (lastSession?.id === s.id) { lastSession = null; els.sendBtn.hidden = true; }
+        if (lastSession?.id === s.id) { lastSession = null; els.sendBtn.hidden = true; els.sendNote.hidden = true; }
         box.remove();
       } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; del.disabled = false; }
     }));
   }
-  box.append(row, note);
+  if (row.childElementCount) box.append(row);
+  box.append(note);
   return box;
 }
 
@@ -1284,6 +1330,7 @@ for (const d of [els.sessions, els.recordings]) {
   d.querySelector('[data-back]').addEventListener('click', () => {
     d.close();
     fillSettings();
+    fillTiles();
     els.copyNote.hidden = true;
     els.settings.showModal();
   });

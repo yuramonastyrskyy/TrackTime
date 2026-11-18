@@ -241,14 +241,15 @@ test('plan strip pieces for the trackside board', () => {
   const rest = boardParts(plan, planProgress(plan, [], 20 * MIN + 1000));
   assert.equal(rest.swatch, 'rest');
   assert.equal(rest.rest, true);
-  assert.equal(rest.target, '');
+  assert.equal(rest.target, 'Easy');
+  assert.equal(rest.unit, '');
   assert.equal(rest.sub, 'left in block');
   const ramp = parsePlan({ blocks: [{ kind: 'ride', min: 5, where: 'red', from: 23, to: 20 }] }).plan;
   assert.equal(boardParts(ramp, planProgress(ramp, [], null)).target, '23.0 → 20.0');
   assert.equal(boardParts(ramp, planProgress(ramp, [], null)).ramp, true);
   assert.equal(boardParts(ramp, planProgress(ramp, [], 150000)).target, '21.5');
   const laps = boardParts(plan, planProgress(plan, [], 60 * MIN));
-  assert.deepEqual([laps.left, laps.leftUnit, laps.swatch, laps.next], ['8', 'laps', 'any', 'Last block']);
+  assert.deepEqual([laps.left, laps.sub, laps.swatch, laps.next], ['8', 'laps left', 'any', 'Last block']);
   const one = parsePlan({ blocks: [{ laps: 1, target: 20 }] }).plan;
   assert.equal(boardParts(one, planProgress(one, [], 0)).swatch, null);
   assert.equal(boardParts(one, planProgress(one, [], 0)).line, 'Ride');
@@ -257,15 +258,18 @@ test('plan strip pieces for the trackside board', () => {
   assert.deepEqual([nt.line, nt.swatch, nt.target, nt.left], ['Under blue', 'blue', '', '3:00']);
   const odd = parsePlan({ blocks: [{ kind: 'ride', min: 3, where: 'track_stand' }] }).plan;
   assert.deepEqual([boardParts(odd, planProgress(odd, [], null)).line, boardParts(odd, planProgress(odd, [], null)).swatch], ['Track stand', 'none']);
-  assert.equal(boardParts(one, planProgress(one, lapsOf(20), 20000)).done, true);
+  const done = boardParts(one, planProgress(one, lapsOf(20), 20000));
+  assert.deepEqual([done.done, done.block, done.doneSub], [true, 'Block 1 of 1', '1 of 1 blocks']);
+  assert.equal(boardParts(one, planProgress(one, [], 0)).sub, 'lap left');
 });
 
 test('band tags carry a word and a mark, not colour alone', () => {
-  assert.deepEqual(bandTag({ band: 'good', gap: 0.1 }), { band: 'good', text: '✓ On target', mark: '✓' });
+  assert.deepEqual(bandTag({ band: 'good', gap: 0.1 }), { band: 'good', text: '✓ On target', mark: '' });
   assert.equal(bandTag({ band: 'slow', gap: 0.5 }).text, '▲ Slow +0.5');
-  assert.equal(bandTag({ band: 'veryslow', gap: 1.24 }, 2).text, '▲▲ Very slow +1.24');
+  assert.equal(bandTag({ band: 'veryslow', gap: 1.24 }, 2).text, '▲▲ Too slow +1.24');
   assert.equal(bandTag({ band: 'fast', gap: -0.4 }).text, '▼ Fast −0.4');
   assert.equal(bandTag({ break: true, band: null }).text, 'Break');
+  assert.equal(bandTag({ break: true, band: null }).mark, '–');
   assert.equal(bandTag({ band: null, gap: null }), null);
   assert.equal(bandTag(undefined), null);
 });

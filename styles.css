@@ -477,3 +477,10 @@ html, body { height: 100%; margin: 0; }
   .tt .btn.mark { min-height: 64px; }
   .tt .status { min-height: 48px; }
 }
+
+/* ---------- details from the design board ---------- */
+.tt .stepper .unit { font-size: 17px; color: var(--tt-text-2); margin-left: 4px; }
+.tt .code-row { display: flex; align-items: center; gap: 14px; }
+.tt .sheet-body.tight { gap: 14px; }
+.tt .sheet-foot.stacked { display: flex; flex-direction: column; gap: 12px; }
+.tt .scard > .part, .tt .scard > .btn.danger { width: 100%; }
