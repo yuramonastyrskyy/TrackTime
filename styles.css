@@ -58,7 +58,7 @@
      drawn at this zoom, so one number makes the whole UI larger or smaller.
      1 = the designer's original sizes. Tap targets and safe areas below are
      held to a usable size whatever the zoom. */
-  --tt-ui-scale: 0.69;
+  --tt-ui-scale: 0.8;
 
   /* Space, radius, hit sizes (in unzoomed px; the floors are real px) */
   --tt-s1: 4px; --tt-s2: 8px; --tt-s3: 12px; --tt-s4: 16px; --tt-s5: 24px; --tt-s6: 32px;
@@ -349,13 +349,17 @@ html, body { height: 100%; margin: 0; }
 .tt .logo svg { width: 34px; height: 34px; }
 .tt .intro h1 { margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -.01em; line-height: 1.05; }
 .tt .tagline { margin: 2px 0 0; font-size: 15px; color: var(--tt-text-2); }
-.tt .illus { height: 196px; border-radius: var(--tt-r-lg); overflow: hidden; background: var(--tt-surface-1); flex: none; }
+.tt .illus { aspect-ratio: 342 / 196; border-radius: var(--tt-r-lg); overflow: hidden; background: var(--tt-surface-1); flex: none; }
 .tt .illus svg { width: 100%; height: 100%; display: block; }
 .tt .lead { margin: 0; font-size: 16px; color: var(--tt-text-2); }
 .tt .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .tt .steps li { display: flex; gap: 14px; align-items: flex-start; font-size: 16px; }
 .tt .steps .sn { width: 30px; height: 30px; border-radius: 50%; background: var(--tt-surface-2); display: grid; place-items: center; font-weight: 800; font-size: 15px; flex: none; margin-top: -3px; }
-.tt .spacer { flex: 1; }
+.tt .spacer { flex: none; height: 6px; }
+/* The intro sits in the middle of the screen; auto margins (not
+   justify-content) so a tall intro on a small screen still scrolls from the top. */
+.tt .intro > .brand { margin-top: auto; }
+.tt .intro > .btn { margin-bottom: auto; }
 .tt .err-card { display: flex; gap: 12px; padding: 14px 16px; border-radius: var(--tt-r-md); background: rgba(229,72,77,.14); box-shadow: inset 0 0 0 2px var(--tt-red); }
 .tt .err-card svg { width: 26px; height: 26px; flex: none; color: var(--tt-red-text); }
 .tt .err-card strong { display: block; font-size: 17px; margin-bottom: 2px; }
