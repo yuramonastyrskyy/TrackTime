@@ -13,19 +13,24 @@
 
 export const DEFAULT_API = 'https://pacemaker-theta.vercel.app';
 
-const WHERE_TEXT = { red: 'Under red', blue: 'Under blue', any: 'Anywhere' };
+const WHERE_TEXT = {
+  red: 'Under red', blue: 'Under blue', corridor: 'Corridor', above: 'Above blue', any: 'Anywhere',
+};
 
 // Accepted spellings for "where" (any case), so small differences on the
 // Pacemaker side still show the right line. Unknown text is shown as it came.
 const WHERE_ALIASES = {
-  red: ['red', 'under red', 'under_red', 'underred', 'sprint', 'sprinter', 'червона', 'червоний', 'під червоною', 'до червоної'],
-  blue: ['blue', 'under blue', 'under_blue', 'underblue', 'stayer', 'синя', 'синій', 'під синьою', 'до синьої'],
+  red: ['red', 'under red', 'underred', 'below red', 'belowred', 'sprint', 'sprinter', 'sprinters', 'червона', 'червоний', 'під червоною', 'до червоної', 'нижче червоної'],
+  blue: ['blue', 'under blue', 'underblue', 'below blue', 'belowblue', 'stayer', 'синя', 'синій', 'під синьою', 'до синьої', 'нижче синьої'],
+  corridor: ['corridor', 'between', 'between red and blue', 'between lines', 'коридор', 'між лініями', 'між червоною і синьою'],
+  above: ['above blue', 'aboveblue', 'over blue', 'above', 'вище синьої', 'над синьою'],
   any: ['any', 'anywhere', 'free', 'будь-де', 'вільно'],
 };
 /** 'red' | 'blue' | 'any', the raw text when it is something else, or null when missing. */
 export function parseWhere(v) {
   if (typeof v !== 'string' || !v.trim()) return null;
-  const k = v.trim().toLowerCase().replace(/\s+/g, ' ');
+  // "below_blue", "Below-Blue" and "below  blue" all read as "below blue".
+  const k = v.trim().toLowerCase().replace(/[\s_-]+/g, ' ');
   for (const [where, names] of Object.entries(WHERE_ALIASES)) if (names.includes(k)) return where;
   return v.trim().slice(0, 30);
 }
@@ -200,7 +205,7 @@ export function describeBlock(block, target = null) {
   if (!block) return '';
   if (block.kind === 'rest') return 'Rest';
   // No "where" in the plan: just the target.
-  const parts = block.where ? [WHERE_TEXT[block.where] || block.where] : [];
+  const parts = block.where ? [whereText(block.where)] : [];
   if (target !== null && block.from !== undefined) parts.push(`${target.toFixed(1)} s`);
   else if (block.from !== undefined) parts.push(`${block.from.toFixed(1)} → ${block.to.toFixed(1)} s`);
   else if (block.target !== undefined) parts.push(`${block.target.toFixed(1)} s`);
@@ -232,11 +237,19 @@ export function stripText(plan, p) {
   return { block: blockLine, left, next };
 }
 
-/** Swatch for the plan strip: 'red', 'blue', 'any', 'rest' or null (no line given). */
+/** "Under blue" for a known line; other text tidied ("lap_zone" -> "Lap zone"). */
+export function whereText(where) {
+  if (WHERE_TEXT[where]) return WHERE_TEXT[where];
+  const t = String(where).replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/** Swatch for the plan strip: a known line, 'rest', 'none' for an unknown line, or null (no line given). */
 function swatchFor(block) {
   if (!block) return null;
   if (block.kind === 'rest') return 'rest';
-  return ['red', 'blue', 'any'].includes(block.where) ? block.where : null;
+  if (!block.where) return null;
+  return WHERE_TEXT[block.where] ? block.where : 'none';
 }
 
 /**
@@ -257,7 +270,7 @@ export function boardParts(plan, p) {
     if (b.from !== undefined && !p.started) { target = `${b.from.toFixed(1)} → ${b.to.toFixed(1)}`; ramp = true; }
     else if (p.target !== null) target = p.target.toFixed(1);
   }
-  const line = rest ? 'Rest' : (b.where ? (WHERE_TEXT[b.where] || b.where) : 'Ride');
+  const line = rest ? 'Rest' : (b.where ? whereText(b.where) : 'Ride');
   let left, leftUnit;
   if (p.leftMs !== null) { left = formatClock(p.leftMs); leftUnit = ''; } else {
     left = String(p.leftLaps); leftUnit = p.leftLaps === 1 ? 'lap' : 'laps';
@@ -266,7 +279,7 @@ export function boardParts(plan, p) {
     done: false,
     block: `Block ${p.index + 1} of ${p.total}`,
     line, swatch: swatchFor(b), target, ramp, rest, left, leftUnit,
-    sub: p.started ? 'left in block' : 'starts at the first crossing',
+    sub: p.started ? 'left in block' : 'starts at first crossing',
     next: p.next ? `Next: ${describeBlock(p.next)} · ${blockLength(p.next)}` : 'Last block',
   };
 }

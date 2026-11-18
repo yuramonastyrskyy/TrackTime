@@ -68,7 +68,14 @@ test('"where" in other spellings, other field names, and unknown values', () => 
   assert.equal(where({ where: 'any' }), 'any');
   assert.equal(where({ where: 'black' }), 'black');
   assert.equal(where({}), undefined);
-  assert.equal(describeBlock(parsePlan({ blocks: [{ min: 1, target: 23, where: 'black' }] }).plan.blocks[0]), 'black · 23.0 s');
+  assert.equal(where({ where: 'below_blue' }), 'blue');
+  assert.equal(where({ where: 'Below-Red' }), 'red');
+  assert.equal(where({ where: 'corridor' }), 'corridor');
+  assert.equal(where({ where: 'above_blue' }), 'above');
+  assert.equal(describeBlock({ kind: 'ride', min: 3, where: 'blue' }), 'Under blue');
+  assert.equal(describeBlock({ kind: 'ride', laps: 6, where: 'corridor', target: 20 }), 'Corridor · 20.0 s');
+  assert.equal(describeBlock({ kind: 'ride', min: 1, where: 'lap_zone' }), 'Lap zone');
+  assert.equal(describeBlock(parsePlan({ blocks: [{ min: 1, target: 23, where: 'black' }] }).plan.blocks[0]), 'Black · 23.0 s');
 });
 
 test('missing optional fields get defaults', () => {
@@ -229,7 +236,7 @@ test('plan strip pieces for the trackside board', () => {
   assert.equal(before.swatch, 'red');
   assert.equal(before.target, '23.0');
   assert.equal(before.left, '10:00');
-  assert.equal(before.sub, 'starts at the first crossing');
+  assert.equal(before.sub, 'starts at first crossing');
   assert.equal(before.next, 'Next: Under blue · 24.0 s · 10 min');
   const rest = boardParts(plan, planProgress(plan, [], 20 * MIN + 1000));
   assert.equal(rest.swatch, 'rest');
@@ -245,6 +252,11 @@ test('plan strip pieces for the trackside board', () => {
   const one = parsePlan({ blocks: [{ laps: 1, target: 20 }] }).plan;
   assert.equal(boardParts(one, planProgress(one, [], 0)).swatch, null);
   assert.equal(boardParts(one, planProgress(one, [], 0)).line, 'Ride');
+  const noTarget = parsePlan({ blocks: [{ kind: 'ride', min: 3, where: 'below_blue' }] }).plan;
+  const nt = boardParts(noTarget, planProgress(noTarget, [], null));
+  assert.deepEqual([nt.line, nt.swatch, nt.target, nt.left], ['Under blue', 'blue', '', '3:00']);
+  const odd = parsePlan({ blocks: [{ kind: 'ride', min: 3, where: 'track_stand' }] }).plan;
+  assert.deepEqual([boardParts(odd, planProgress(odd, [], null)).line, boardParts(odd, planProgress(odd, [], null)).swatch], ['Track stand', 'none']);
   assert.equal(boardParts(one, planProgress(one, lapsOf(20), 20000)).done, true);
 });
 
