@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   planFromHash, planToHash, parsePlan, planProgress, gapBand, targetAt, stripText, describeBlock,
-  DEFAULT_API, formatClock,
+  DEFAULT_API, formatClock, boardParts, bandTag, summarize,
 } from '../js/plan.js';
 import { extraWords, spokenText, PAUSE } from '../js/speech.js';
 
@@ -219,4 +219,58 @@ test('spoken gap words', () => {
   assert.equal(spokenText('24.3', { gap: 0.3 }), '24.3. plus 0.3');
   assert.equal(spokenText('23.8', { gap: -0.2, nextBlock: true }), '23.8. minus 0.2. next block');
   assert.equal(spokenText('23.8'), '23.8');
+});
+
+test('plan strip pieces for the trackside board', () => {
+  const plan = parsePlan(SPEC).plan;
+  const before = boardParts(plan, planProgress(plan, [], null));
+  assert.equal(before.block, 'Block 1 of 5');
+  assert.equal(before.line, 'Under red');
+  assert.equal(before.swatch, 'red');
+  assert.equal(before.target, '23.0');
+  assert.equal(before.left, '10:00');
+  assert.equal(before.sub, 'starts at the first crossing');
+  assert.equal(before.next, 'Next: Under blue · 24.0 s · 10 min');
+  const rest = boardParts(plan, planProgress(plan, [], 20 * MIN + 1000));
+  assert.equal(rest.swatch, 'rest');
+  assert.equal(rest.rest, true);
+  assert.equal(rest.target, '');
+  assert.equal(rest.sub, 'left in block');
+  const ramp = parsePlan({ blocks: [{ kind: 'ride', min: 5, where: 'red', from: 23, to: 20 }] }).plan;
+  assert.equal(boardParts(ramp, planProgress(ramp, [], null)).target, '23.0 → 20.0');
+  assert.equal(boardParts(ramp, planProgress(ramp, [], null)).ramp, true);
+  assert.equal(boardParts(ramp, planProgress(ramp, [], 150000)).target, '21.5');
+  const laps = boardParts(plan, planProgress(plan, [], 60 * MIN));
+  assert.deepEqual([laps.left, laps.leftUnit, laps.swatch, laps.next], ['8', 'laps', 'any', 'Last block']);
+  const one = parsePlan({ blocks: [{ laps: 1, target: 20 }] }).plan;
+  assert.equal(boardParts(one, planProgress(one, [], 0)).swatch, null);
+  assert.equal(boardParts(one, planProgress(one, [], 0)).line, 'Ride');
+  assert.equal(boardParts(one, planProgress(one, lapsOf(20), 20000)).done, true);
+});
+
+test('band tags carry a word and a mark, not colour alone', () => {
+  assert.deepEqual(bandTag({ band: 'good', gap: 0.1 }), { band: 'good', text: '✓ On target', mark: '✓' });
+  assert.equal(bandTag({ band: 'slow', gap: 0.5 }).text, '▲ Slow +0.5');
+  assert.equal(bandTag({ band: 'veryslow', gap: 1.24 }, 2).text, '▲▲ Very slow +1.24');
+  assert.equal(bandTag({ band: 'fast', gap: -0.4 }).text, '▼ Fast −0.4');
+  assert.equal(bandTag({ break: true, band: null }).text, 'Break');
+  assert.equal(bandTag({ band: null, gap: null }), null);
+  assert.equal(bandTag(undefined), null);
+});
+
+test('summary after Stop: best, average and bars leave out breaks', () => {
+  const s = summarize([20000, 22000, 21000, 60000].map((ms) => ({ ms })));
+  assert.equal(s.count, 4);
+  assert.equal(s.best, 20000);
+  assert.equal(s.average, 21000);
+  assert.equal(s.onTarget, null);
+  assert.deepEqual(s.bars.map((b) => b.h), [2, 10, 6, 10]);
+  assert.equal(s.bars[3].band, 'break');
+  const withPlan = summarize([{ ms: 23100 }, { ms: 23600 }, { ms: 50000 }], [
+    { band: 'good', gap: 0.1 }, { band: 'slow', gap: 0.6 }, { break: true, band: null },
+  ]);
+  assert.deepEqual(withPlan.onTarget, { good: 1, of: 2 });
+  assert.equal(withPlan.bars[1].band, 'slow');
+  assert.equal(withPlan.bars[2].band, 'break');
+  assert.equal(summarize([]).best, null);
 });

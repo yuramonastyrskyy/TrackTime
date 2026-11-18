@@ -17,7 +17,10 @@ It runs in the phone's browser on iPhone and Android, works offline after the fi
 Tips:
 - Keep the phone plugged into a power bank. The app keeps the screen on while timing.
 - **Settings → Rest between laps** (on by default): after each lap the app stops analysing the line until 1.5 s before the ignore time ends, which saves most of the detection work and keeps the phone cooler. The camera and any recording keep running, so nothing has to restart. Turn it off if you want every crossing in the log, including the team behind.
-- If a lap was wrong (for example someone stepped onto the line), tap **Undo lap**.
+- If a lap was wrong (for example someone stepped onto the line), tap **Undo** (left of the lap times) twice: the first tap shows which lap it will remove.
+- **Stop**, **Undo**, **Clear laps**, closing a plan and deleting a session or recording all take two taps within 3 seconds, so a brush with a glove does nothing.
+- After **Stop**, a summary shows the best and average lap (long rest laps left out) and a bar per lap.
+- **Settings → Display → High contrast**: black background and filled lap colours, for a bright hall. It also turns on by itself when the phone asks for more contrast.
 - **Settings → Copy lap times** copies the session, ready to paste into a chat.
 - If you hear nothing inside Telegram, set **Voice** to **Recorded clips**.
 
@@ -41,7 +44,7 @@ node test/run-clip.mjs tracktime-2026-11-14_0812-part1.mp4 --log tracktime-2026-
 
 Pacemaker (the coach's training app) holds track session plans and checks the laps against them. TrackTime only times the laps.
 
-- **Plan from a link.** Pacemaker opens TrackTime as `https://<TrackTime address>/#pm=<plan>`. The plan stays for the visit (also across a reload) and is removed from the address bar. A plan strip above the lap list shows the plan name, the current block ("Block 2 of 5 · Under blue · 24.0 s"), the time or laps left in it, and the next block. Tap **×** twice to close the plan. A link that can't be read shows a short note and the app carries on without a plan.
+- **Plan from a link.** Pacemaker opens TrackTime as `https://<TrackTime address>/#pm=<plan>`. The plan stays for the visit (also across a reload) and is removed from the address bar. A plan strip above the lap list shows the block ("Block 2 of 5"), the plan name, the line and target in large type ("Under blue · 24.0 s"), the time or laps left in the block, and the next block. Tap **×** twice to close the plan. A link that can't be read shows a short note and the app carries on without a plan.
 - **Plan clock.** It starts at the first crossing, like the lap clock. Time blocks end on that clock, lap blocks after their last lap. A lap longer than twice the target is a break (rest, or riders off on the apron) and is not scored. A ramp's target moves evenly from `from` to `to` over the block.
 - **Lap colours** (with a plan): within ±0.3 s of the target green, 0.3–0.8 s slow orange, more than 0.8 s slow red, more than 0.3 s fast violet.
 - **Settings → Say gap to target** (off by default): after the lap time, says the gap, for example "24.3 … plus 0.3", and "next block" on the first lap after the plan moves on.

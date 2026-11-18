@@ -231,3 +231,83 @@ export function stripText(plan, p) {
   const next = p.next ? `Next: ${describeBlock(p.next)} · ${blockLength(p.next)}` : 'Last block';
   return { block: blockLine, left, next };
 }
+
+/** Swatch for the plan strip: 'red', 'blue', 'any', 'rest' or null (no line given). */
+function swatchFor(block) {
+  if (!block) return null;
+  if (block.kind === 'rest') return 'rest';
+  return ['red', 'blue', 'any'].includes(block.where) ? block.where : null;
+}
+
+/**
+ * The pieces of the plan strip for the trackside board, each a short text:
+ *   block "Block 2 of 5", line "Under blue", swatch, target "24.0" (or
+ *   "22.0 → 24.0" before a ramp starts, ramp true), left "9:30" or "8",
+ *   leftUnit "" or "laps", sub "left in block" or "starts at the first crossing",
+ *   next "Next: Rest · 2 min" or "Last block", done.
+ */
+export function boardParts(plan, p) {
+  if (p.done) {
+    return { done: true, block: `${p.total} of ${p.total} blocks`, next: '' };
+  }
+  const b = p.block;
+  const rest = b.kind === 'rest';
+  let target = '', ramp = false;
+  if (!rest) {
+    if (b.from !== undefined && !p.started) { target = `${b.from.toFixed(1)} → ${b.to.toFixed(1)}`; ramp = true; }
+    else if (p.target !== null) target = p.target.toFixed(1);
+  }
+  const line = rest ? 'Rest' : (b.where ? (WHERE_TEXT[b.where] || b.where) : 'Ride');
+  let left, leftUnit;
+  if (p.leftMs !== null) { left = formatClock(p.leftMs); leftUnit = ''; } else {
+    left = String(p.leftLaps); leftUnit = p.leftLaps === 1 ? 'lap' : 'laps';
+  }
+  return {
+    done: false,
+    block: `Block ${p.index + 1} of ${p.total}`,
+    line, swatch: swatchFor(b), target, ramp, rest, left, leftUnit,
+    sub: p.started ? 'left in block' : 'starts at the first crossing',
+    next: p.next ? `Next: ${describeBlock(p.next)} · ${blockLength(p.next)}` : 'Last block',
+  };
+}
+
+/** Words and mark for a lap's band tag: "▲ Slow +0.5", "✓ On target", "Break". */
+export function bandTag(result, decimals = 1) {
+  if (!result) return null;
+  if (result.break) return { band: 'break', text: 'Break', mark: '' };
+  if (!result.band) return null;
+  const g = result.gap;
+  const gap = `${g < 0 ? '−' : '+'}${Math.abs(g).toFixed(decimals)}`;
+  switch (result.band) {
+    case 'good': return { band: 'good', text: '✓ On target', mark: '✓' };
+    case 'slow': return { band: 'slow', text: `▲ Slow ${gap}`, mark: '▲' };
+    case 'veryslow': return { band: 'veryslow', text: `▲▲ Very slow ${gap}`, mark: '▲▲' };
+    case 'fast': return { band: 'fast', text: `▼ Fast ${gap}`, mark: '▼' };
+    default: return null;
+  }
+}
+
+/**
+ * Numbers for the summary after Stop. laps: [{ ms }], results: plan results
+ * for the same laps (or []). Without a plan, a lap over 1.5x the median is a
+ * break (riders resting at the end). Returns best, average (both over laps
+ * that are not breaks), on-target count, and a bar per lap: { h: 1..10, band }.
+ */
+export function summarize(laps, results = []) {
+  const ms = laps.map((l) => l.ms);
+  const sorted = [...ms].sort((a, b) => a - b);
+  const median = sorted.length ? sorted[sorted.length >> 1] : 0;
+  const isBreak = (i) => (results[i] ? !!results[i].break : ms[i] > 1.5 * median);
+  const ridden = ms.filter((_, i) => !isBreak(i));
+  const best = ridden.length ? Math.min(...ridden) : null;
+  const average = ridden.length ? ridden.reduce((a, b) => a + b, 0) / ridden.length : null;
+  const scored = results.filter((r) => r && r.band);
+  const onTarget = results.length ? { good: scored.filter((r) => r.band === 'good').length, of: scored.length } : null;
+  const lo = best ?? 0, hi = ridden.length ? Math.max(...ridden) : 0;
+  const bars = ms.map((v, i) => {
+    if (isBreak(i)) return { h: 10, band: 'break' };
+    const h = hi > lo ? 2 + Math.round((8 * (v - lo)) / (hi - lo)) : 6;
+    return { h, band: results[i]?.band ?? null };
+  });
+  return { count: ms.length, best, average, onTarget, bars };
+}

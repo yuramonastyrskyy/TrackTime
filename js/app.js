@@ -8,7 +8,7 @@ import {
   SessionRecorder, sessionFiles, shareOrDownload, store, formatBytes,
 } from './recorder.js';
 import { LapSender, linkOverrides, normalizeCode } from './lapLink.js';
-import { planFromHash, planProgress, stripText } from './plan.js';
+import { planFromHash, planProgress, boardParts, bandTag, summarize } from './plan.js';
 import {
   newSession, sessionStart, sessionLap, sessionUndo, sessionDuration, sendSession, apiFor,
 } from './session.js';
@@ -16,21 +16,31 @@ import {
 const $ = (id) => document.getElementById(id);
 const els = {
   video: $('video'), overlay: $('overlay'), intro: $('intro'), cameraBtn: $('cameraBtn'),
-  cameraError: $('cameraError'), hud: $('hud'), panel: $('panel'), status: $('status'), fps: $('fps'),
-  lastLap: $('lastLap'), lapInfo: $('lapInfo'), laps: $('laps'), startBtn: $('startBtn'),
-  undoBtn: $('undoBtn'), settingsBtn: $('settingsBtn'), settings: $('settings'),
-  ignoreSec: $('ignoreSec'), decimals: $('decimals'), voice: $('voice'),
+  cameraError: $('cameraError'), cameraErrorTitle: $('cameraErrorTitle'), cameraErrorText: $('cameraErrorText'),
+  hud: $('hud'), panel: $('panel'), fps: $('fps'),
+  status: $('status'), statusLabel: $('statusLabel'), statusIcon: $('statusIcon'), statusSteps: $('statusSteps'),
+  setupHint: $('setupHint'), lastLap: $('lastLap'), lapTag: $('lapTag'), lapInfo: $('lapInfo'),
+  lapStrip: $('lapStrip'), laps: $('laps'), undoBtn: $('undoBtn'), undoLabel: $('undoLabel'), undoSub: $('undoSub'),
+  actions: $('actions'), startBtn: $('startBtn'), settingsBtn: $('settingsBtn'), settings: $('settings'),
+  ignoreSec: $('ignoreSec'), ignoreUp: $('ignoreUp'), ignoreDown: $('ignoreDown'), decimals: $('decimals'), voice: $('voice'),
   testVoiceBtn: $('testVoiceBtn'), resetMarkersBtn: $('resetMarkersBtn'),
-  copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'),
+  copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'), highContrast: $('highContrast'),
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
-  stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkPill: $('linkPill'),
+  stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkStatusText: $('linkStatusText'), linkPill: $('linkPill'),
   restBetweenLaps: $('restBetweenLaps'),
-  planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planLeft: $('planLeft'),
+  planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planMain: $('planMain'),
+  planSwatch: $('planSwatch'), planWhere: $('planWhere'), planTarget: $('planTarget'), planLeft: $('planLeft'),
+  planSub: $('planSub'), planDone: $('planDone'), planDoneSub: $('planDoneSub'),
   planNext: $('planNext'), planClose: $('planClose'), toast: $('toast'), sayGap: $('sayGap'),
+  summary: $('summary'), sumMeta: $('sumMeta'), sumBest: $('sumBest'), sumAvg: $('sumAvg'),
+  sumThird: $('sumThird'), sumThirdK: $('sumThirdK'), sumBars: $('sumBars'),
   sendBtn: $('sendBtn'), sendNote: $('sendNote'),
   sessionsBtn: $('sessionsBtn'), sessions: $('sessions'), sessList: $('sessList'),
-  recordingsBtn: $('recordingsBtn'), recordings: $('recordings'), recList: $('recList'), recStorage: $('recStorage'),
+  recordingsBtn: $('recordingsBtn'), recordings: $('recordings'), recList: $('recList'),
+  recStorage: $('recStorage'), recStorageText: $('recStorageText'), recStorageFill: $('recStorageFill'),
 };
+/** Sets text only when it changed, so nothing re-lays out for nothing. */
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
 
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
@@ -66,15 +76,18 @@ const lapLink = new LapSender({ ...linkOverrides(location.search), onState: rend
 lapLink.setCode(settings.stopwatchCode);
 function renderLink(s) {
   els.linkPill.hidden = !s.code;
-  els.linkPill.textContent = s.connected ? '· stopwatch' : '· stopwatch …';
-  if (!s.code) { els.linkStatus.textContent = ''; return; }
+  els.linkPill.textContent = s.connected ? 'stopwatch ✓' : 'stopwatch …';
+  els.linkPill.className = s.connected ? 'ok' : '';
+  els.linkStatus.hidden = !s.code;
+  els.linkStatus.classList.toggle('ok', !!s.connected);
+  if (!s.code) { els.linkStatusText.textContent = ''; return; }
   const up = s.links.filter((l) => l.status === 'open').length;
   let text = s.connected ? `Connected (${up} of ${s.links.length} relays).` : 'Connecting…';
   if (s.lastSent) {
     const when = new Date(s.lastSent.at).toLocaleTimeString();
     text += ` Last sent: ${s.lastSent.lap ? `lap ${s.lastSent.lap}` : 'first crossing'} at ${when}.`;
   }
-  els.linkStatus.textContent = text;
+  els.linkStatusText.textContent = text;
 }
 /** Wall-clock time (epoch ms) of a frame time from the detector clock. */
 function frameEpoch(t) {
@@ -132,25 +145,67 @@ function currentProgress() {
   const laps = counter.laps.map((l) => ({ ms: l.ms, t: l.at - counter.startTime }));
   return planProgress(plan, laps, planNow());
 }
+// Plan strip. Rebuilt on lap events and once a second for the time left;
+// only text and a few classes change, never the layout around it.
 function renderPlan() {
-  els.planStrip.hidden = !plan;
+  els.planStrip.hidden = !plan || !els.summary.hidden;
   if (!plan) return;
-  const text = stripText(plan, currentProgress());
-  els.planName.textContent = plan.name;
-  els.planBlock.textContent = text.block;
-  els.planLeft.textContent = text.left;
-  els.planNext.textContent = text.next;
-}
-setInterval(() => { if (plan && !els.panel.hidden) renderPlan(); }, 250);
-els.planClose.addEventListener('click', () => {
-  if (els.planClose.dataset.armed !== '1') {
-    els.planClose.dataset.armed = '1';
-    els.planClose.textContent = 'Tap again to close plan';
-    setTimeout(() => { els.planClose.dataset.armed = ''; els.planClose.textContent = '×'; }, 3000);
+  const t = boardParts(plan, currentProgress());
+  setText(els.planName, plan.name);
+  setText(els.planBlock, t.block);
+  els.planMain.hidden = t.done;
+  els.planDone.hidden = !t.done;
+  if (t.done) {
+    setText(els.planDoneSub, '');
+    setText(els.planNext, '');
+    els.planNext.hidden = true;
     return;
   }
-  els.planClose.dataset.armed = '';
-  els.planClose.textContent = '×';
+  els.planNext.hidden = false;
+  const sw = `swatch${t.swatch ? ` sw-${t.swatch}` : ''}`;
+  if (els.planSwatch.className !== sw) els.planSwatch.className = sw;
+  els.planSwatch.hidden = !t.swatch;
+  setText(els.planWhere, t.line);
+  els.planTarget.hidden = t.rest;
+  els.planTarget.classList.toggle('ramp', t.ramp);
+  setPlanNumber(els.planTarget, t.target, t.target ? 's' : '');
+  setPlanNumber(els.planLeft, t.left, t.leftUnit);
+  setText(els.planSub, t.sub);
+  setText(els.planNext, t.next);
+}
+/** "23.0" with a small unit after it; touches the DOM only when it changed. */
+function setPlanNumber(el, value, unit) {
+  const key = `${value}|${unit}`;
+  if (el.dataset.v === key) return;
+  el.dataset.v = key;
+  el.textContent = value;
+  if (unit) { const u = document.createElement('small'); u.textContent = unit; el.append(u); }
+}
+setInterval(() => { if (plan && !els.panel.hidden && !els.planStrip.hidden) renderPlan(); }, 1000);
+
+// Two taps for anything that loses work: the first arms the button for 3 s
+// and says what the second tap will do.
+const ARM_MS = 3000;
+function arm(btn, onArm, onDisarm) {
+  if (btn._armTimer) { clearTimeout(btn._armTimer); btn._armTimer = null; return true; }
+  onArm();
+  btn._armTimer = setTimeout(() => { btn._armTimer = null; onDisarm(); }, ARM_MS);
+  return false;
+}
+function disarm(btn, onDisarm) {
+  if (!btn._armTimer) return;
+  clearTimeout(btn._armTimer); btn._armTimer = null; onDisarm();
+}
+
+const planCloseIcon = els.planClose.innerHTML;
+const resetPlanClose = () => { els.planClose.classList.remove('confirm'); els.planClose.innerHTML = planCloseIcon; };
+els.planClose.addEventListener('click', () => {
+  const second = arm(els.planClose, () => {
+    els.planClose.classList.add('confirm');
+    els.planClose.textContent = 'Tap again to close plan';
+  }, resetPlanClose);
+  if (!second) return;
+  resetPlanClose();
   setPlan(null);
 });
 
@@ -174,28 +229,48 @@ function finishSession() {
   session = null;
   if (!s) return;
   s.endedAt = Date.now();
-  if (s.laps.length) { persistSession(s); lastSession = s; } else {
+  if (s.laps.length) { persistSession(s); lastSession = s; resetSendBtn(); } else {
     store.deleteTiming(s.id).catch(() => {});
   }
 }
 
-const STATUS_TEXT = {
-  setup: 'Set up', learning: 'Keep the line clear', armed: 'Waiting for first rider', timing: 'Timing',
+// Status band: colour + word + icon + step meter, so it reads without colour.
+const STATUS = {
+  setup: { label: 'Set up', cls: 'st-setup', icon: 'i-setup', step: 1 },
+  learning: { label: 'Keep the line clear', cls: 'st-clear', icon: 'i-clear', step: 2 },
+  armed: { label: 'Waiting for first rider', cls: 'st-waiting', icon: 'i-wait', step: 3 },
+  timing: { label: 'Timing', cls: 'st-timing', icon: 'i-timing', step: 4 },
 };
 function setState(s) {
   state = s;
-  els.status.textContent = STATUS_TEXT[s] || '';
+  const st = STATUS[s] || STATUS.setup;
+  els.status.className = `status ${st.cls}`;
   els.status.dataset.state = s;
-  const active = s === 'learning' || s === 'armed' || s === 'timing';
+  els.statusLabel.textContent = st.label;
+  els.statusIcon.setAttribute('href', `#${st.icon}`);
+  [...els.statusSteps.children].forEach((i, k) => i.classList.toggle('on', k < st.step));
+  const active = isActive();
+  disarm(els.startBtn, () => {});
   els.startBtn.textContent = active ? (recorder ? 'Stop recording' : 'Stop') : 'Start timing';
-  els.startBtn.classList.toggle('stop', active);
+  els.startBtn.className = active ? 'btn main stop' : 'btn main primary full';
+  els.actions.classList.toggle('timing', active);
   els.recBtn.hidden = active;
+  els.settingsBtn.className = active ? 'btn icon' : 'btn ghost';
   els.markBtn.hidden = !(active && recorder);
-  els.startBtn.classList.toggle('wide', active && !recorder);
   els.sendBtn.hidden = active || !lastSession?.laps.length;
-  if (active) els.sendNote.hidden = true;
+  if (active) { els.sendNote.hidden = true; els.summary.hidden = true; }
+  renderLayout();
   recorder?.log('state', { detail: s });
   drawOverlay();
+}
+const isActive = () => state === 'learning' || state === 'armed' || state === 'timing';
+/** Set up with no laps: a compact top (status + marker hint) and no lap row. */
+function renderLayout() {
+  const setupEmpty = state === 'setup' && !counter.laps.length;
+  els.hud.classList.toggle('compact', setupEmpty);
+  els.setupHint.hidden = !setupEmpty;
+  els.lapStrip.hidden = !els.summary.hidden || (state === 'setup' && !counter.laps.length);
+  els.planStrip.hidden = !plan || !els.summary.hidden;
 }
 
 // ---------- camera ----------
@@ -203,7 +278,7 @@ els.cameraBtn.addEventListener('click', startCamera);
 async function startCamera() {
   els.cameraError.hidden = true;
   if (!navigator.mediaDevices?.getUserMedia) {
-    showCameraError('This browser cannot use the camera. Open the app in Safari or Chrome over https.');
+    showCameraError("This browser can't use the camera", 'Open the app in Safari or Chrome over https.');
     return;
   }
   try {
@@ -218,9 +293,11 @@ async function startCamera() {
       },
     });
   } catch (err) {
-    showCameraError(err && err.name === 'NotAllowedError'
-      ? 'Camera access was blocked. Allow the camera for this app in the phone settings, then try again.'
-      : `The camera did not start (${err && err.name ? err.name : 'unknown error'}). Close other camera apps and try again.`);
+    if (err && err.name === 'NotAllowedError') {
+      showCameraError('Camera access was blocked', 'Allow the camera for this app in the phone settings, then try again.');
+    } else {
+      showCameraError("The camera didn't start", `${err && err.name ? err.name : 'Unknown error'}. Close other camera apps and try again.`);
+    }
     return;
   }
   els.video.hidden = false;
@@ -231,14 +308,17 @@ async function startCamera() {
   els.panel.hidden = false;
   stream.getVideoTracks()[0].addEventListener('ended', () => {
     stopTiming();
-    showCameraError('The camera stopped. Tap to turn it on again.');
+    showCameraError('The camera stopped', 'Tap Turn on camera to start it again.');
+    els.hud.hidden = true;
+    els.panel.hidden = true;
     els.intro.hidden = false;
   });
   setState('setup');
   scheduleFrame();
 }
-function showCameraError(msg) {
-  els.cameraError.textContent = msg;
+function showCameraError(title, msg) {
+  els.cameraErrorTitle.textContent = title;
+  els.cameraErrorText.textContent = msg;
   els.cameraError.hidden = false;
 }
 
@@ -393,8 +473,18 @@ function prepareDetector({ keepClock = false } = {}) {
 }
 
 // ---------- timing ----------
+// Stop takes two taps (same 3 s window as Undo), so a brush with a glove
+// does not end an hour of timing.
 els.startBtn.addEventListener('click', async () => {
-  if (state === 'learning' || state === 'armed' || state === 'timing') { stopTiming(); return; }
+  if (isActive()) {
+    const label = recorder ? 'Stop recording' : 'Stop';
+    const second = arm(els.startBtn, () => {
+      els.startBtn.classList.add('armed');
+      els.startBtn.textContent = recorder ? 'Tap again to stop recording' : 'Tap again to stop';
+    }, () => { els.startBtn.classList.remove('armed'); els.startBtn.textContent = label; });
+    if (second) stopTiming();
+    return;
+  }
   startTiming();
 });
 
@@ -406,6 +496,7 @@ function startTiming() {
   finishSession();
   session = newSession({ plan, settings: sessionSettings() });
   announcedBlock = 0;
+  els.summary.hidden = true;
   renderLaps();
   renderPlan();
   try { prepareDetector(); } catch (e) { els.lapInfo.textContent = e.message; return false; }
@@ -419,7 +510,38 @@ function stopTiming() {
   finishSession();
   releaseWakeLock();
   if (recorder) stopRecording();
+  renderSummary();
   if (stream) setState('setup');
+}
+
+// Session summary after Stop: drawn once, never during timing.
+function renderSummary() {
+  const laps = counter.laps;
+  els.summary.hidden = !laps.length;
+  if (!laps.length) return;
+  const dec = settings.decimals;
+  const results = plan ? currentProgress().results : [];
+  const s = summarize(laps, results);
+  const total = laps.reduce((n, l) => n + l.ms, 0);
+  els.sumMeta.textContent = `${s.count} ${s.count === 1 ? 'lap' : 'laps'} · ${formatDuration(total)}${plan ? ` · ${plan.name}` : ''}`;
+  setStat(els.sumBest, s.best === null ? '–' : formatLap(s.best, dec), s.best === null ? '' : 's');
+  setStat(els.sumAvg, s.average === null ? '–' : formatLap(s.average, dec), s.average === null ? '' : 's');
+  if (s.onTarget) {
+    els.sumThirdK.textContent = 'On target';
+    setStat(els.sumThird, String(s.onTarget.good), `/${s.onTarget.of}`);
+  } else {
+    els.sumThirdK.textContent = 'Laps';
+    setStat(els.sumThird, String(s.count), '');
+  }
+  els.sumBars.replaceChildren(...s.bars.slice(-60).map((b) => {
+    const i = document.createElement('i');
+    i.className = `h${b.h}${b.band ? ` b-${b.band}` : ''}`;
+    return i;
+  }));
+}
+function setStat(el, value, unit) {
+  el.textContent = value;
+  if (unit) { const u = document.createElement('small'); u.textContent = unit; el.append(u); }
 }
 
 function onCrossing(t) {
@@ -464,7 +586,21 @@ function lapExtras() {
   return { gap: last?.gap ?? null, decimals: settings.decimals, nextBlock };
 }
 
+// Undo takes two taps and says which lap it will remove.
+function resetUndo() {
+  els.undoBtn.classList.remove('armed');
+  els.undoLabel.textContent = 'Undo';
+  els.undoSub.textContent = '';
+}
 els.undoBtn.addEventListener('click', () => {
+  const last = counter.laps[counter.laps.length - 1];
+  const second = arm(els.undoBtn, () => {
+    els.undoBtn.classList.add('armed');
+    els.undoLabel.textContent = 'Tap again';
+    els.undoSub.textContent = last ? `Undo ${formatLap(last.ms, settings.decimals)}` : 'Undo start';
+  }, resetUndo);
+  if (!second) return;
+  resetUndo();
   const undone = counter.undoLast();
   if (session) { sessionUndo(session); persistSession(); }
   if (plan) announcedBlock = currentProgress().index;
@@ -472,39 +608,56 @@ els.undoBtn.addEventListener('click', () => {
   recorder?.log('undo', { lap: undone?.lap, detail: undone ? 'lap' : 'start' });
   if (counter.startTime === null && (state === 'timing')) setState('armed');
   renderLaps();
+  if (!els.summary.hidden) renderSummary();
 });
 
+const MAX_CHIPS = 12; // more never fit on the row
 function renderLaps() {
   const laps = counter.laps;
   const dec = settings.decimals;
   els.undoBtn.disabled = laps.length === 0;
+  if (!laps.length) disarm(els.undoBtn, resetUndo);
   const results = plan && laps.length ? currentProgress().results : [];
-  els.lastLap.className = 'big';
+  renderLayout();
   if (!laps.length) {
+    els.lastLap.className = `lastlap empty${dec === 2 ? ' dp2' : ''}`;
     els.lastLap.textContent = '--.-';
+    els.lapTag.hidden = true;
     els.lapInfo.textContent = counter.startTime === null ? '' : 'Clock started';
     els.laps.replaceChildren();
     return;
   }
   const last = laps[laps.length - 1];
   const best = Math.min(...laps.map((l) => l.ms));
-  els.lastLap.textContent = formatLap(last.ms, dec);
   const lastResult = results[laps.length - 1];
-  if (lastResult?.band) els.lastLap.classList.add(`band-${lastResult.band}`);
+  els.lastLap.className = `lastlap${dec === 2 ? ' dp2' : ''}${lastResult?.band ? ` b-${lastResult.band}` : ''}`;
+  els.lastLap.textContent = formatLap(last.ms, dec);
+  // Tag: the band in words and a mark (plan), or "New best" without a plan.
+  let tag = bandTag(lastResult, dec);
+  if (!tag && !plan && laps.length > 1 && last.ms === best) tag = { band: 'best', text: 'New best' };
+  els.lapTag.hidden = !tag;
+  if (tag) { els.lapTag.className = `tag b-${tag.band}`; els.lapTag.textContent = tag.text; }
   const prev = laps[laps.length - 2];
   const delta = prev ? ` · ${last.ms <= prev.ms ? '−' : '+'}${(Math.abs(last.ms - prev.ms) / 1000).toFixed(dec)}` : '';
-  let target = '';
-  if (lastResult?.break) target = ' · break';
-  else if (lastResult?.target != null) target = ` · target ${lastResult.target.toFixed(1)}`;
-  els.lapInfo.textContent = `Lap ${last.lap} · best ${formatLap(best, dec)}${delta}${target}`;
-  els.laps.replaceChildren(...laps.slice().reverse().map((l) => {
+  els.lapInfo.textContent = `Lap ${last.lap} · best ${formatLap(best, dec)}${delta}`;
+  els.laps.replaceChildren(...laps.slice(-MAX_CHIPS).reverse().map((l, k) => {
     const li = document.createElement('li');
-    if (l.ms === best) li.className = 'best';
-    const band = results[l.lap - 1]?.band;
-    if (band) li.classList.add(`band-${band}`);
-    const small = document.createElement('small');
-    small.textContent = String(l.lap);
-    li.append(small, formatLap(l.ms, dec));
+    const r = results[l.lap - 1];
+    const t = bandTag(r, dec);
+    li.className = `chip${k === 0 ? ' latest' : ''}${l.ms === best ? ' best' : ''}${r?.band ? ` c-${r.band}` : ''}`;
+    const n = document.createElement('span');
+    n.className = 'n';
+    n.textContent = String(l.lap);
+    if (t?.mark) { const em = document.createElement('em'); em.textContent = t.mark; n.append(em); }
+    const time = document.createElement('span');
+    time.className = 't';
+    time.textContent = formatLap(l.ms, dec);
+    li.append(n, time);
+    if (l.ms === best && laps.length > 1) {
+      const b = document.createElement('span');
+      b.className = 'bst'; b.textContent = 'best';
+      li.append(b);
+    }
     return li;
   }));
 }
@@ -537,33 +690,64 @@ function drawOverlay() {
 
   octx.lineCap = 'round';
   // neutral zone part
-  octx.setLineDash([6, 6]);
-  octx.strokeStyle = lvl.apron > 0.05 ? 'rgba(217,163,95,0.95)' : 'rgba(217,163,95,0.6)';
+  octx.setLineDash([7, 7]);
+  octx.globalAlpha = lvl.apron > 0.05 ? 1 : 0.65;
+  octx.strokeStyle = colors.amber;
   octx.lineWidth = 3;
   octx.beginPath(); octx.moveTo(b.x, b.y); octx.lineTo(apronEnd.x, apronEnd.y); octx.stroke();
   octx.setLineDash([]);
-  // track part
-  octx.strokeStyle = covered ? 'rgba(229,72,77,0.95)' : 'rgba(62,155,255,0.75)';
-  octx.lineWidth = 2;
+  octx.globalAlpha = 1;
+  // track part: blue when clear, red while something covers it
+  octx.strokeStyle = covered ? colors.red : colors.blue;
+  octx.lineWidth = covered ? 4 : 3;
   octx.beginPath(); octx.moveTo(a.x, a.y); octx.lineTo(b.x, b.y); octx.stroke();
 
   const editable = state === 'setup';
-  drawHandle(a, 'Top of track', editable);
-  drawHandle(b, 'Inner edge', editable);
+  drawHandle(a, 1, 'Top of track', editable, W);
+  drawHandle(b, 2, 'Inner edge', editable, W);
 }
-function drawHandle(p, label, editable) {
-  // Hollow ring, so the black line stays visible for lining up.
-  octx.beginPath();
-  octx.arc(p.x, p.y, editable ? 14 : 6, 0, Math.PI * 2);
-  octx.lineWidth = 5; octx.strokeStyle = 'rgba(10,22,34,0.8)'; octx.stroke();
-  octx.lineWidth = 3; octx.strokeStyle = editable ? '#f4f1ea' : 'rgba(244,241,234,0.6)'; octx.stroke();
-  if (editable) {
-    octx.font = '600 13px system-ui, sans-serif';
-    octx.fillStyle = '#f4f1ea';
-    octx.strokeStyle = 'rgba(10,22,34,0.85)'; octx.lineWidth = 4;
-    octx.strokeText(label, p.x + 20, p.y + 5);
-    octx.fillText(label, p.x + 20, p.y + 5);
+
+// Overlay colours come from the CSS tokens, read once (and again when the
+// high-contrast setting changes), never per frame.
+const colors = {};
+function readColors() {
+  const cs = getComputedStyle(document.body);
+  for (const k of ['blue', 'red', 'amber', 'text', 'bg']) colors[k] = cs.getPropertyValue(`--tt-${k}`).trim();
+}
+readColors();
+
+function drawHandle(p, n, label, editable, W) {
+  if (!editable) {
+    // Locked while timing: a small dot, so the line stays visible.
+    octx.beginPath(); octx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+    octx.fillStyle = '#fff'; octx.fill();
+    octx.lineWidth = 2; octx.strokeStyle = '#0a1622'; octx.stroke();
+    return;
   }
+  // Halo r=30 marks the drag target; the ring is hollow-ish so the black line shows through.
+  octx.globalAlpha = 0.7;
+  octx.beginPath(); octx.arc(p.x, p.y, 30, 0, Math.PI * 2);
+  octx.lineWidth = 2; octx.strokeStyle = colors.blue; octx.stroke();
+  octx.globalAlpha = 1;
+  octx.beginPath(); octx.arc(p.x, p.y, 22, 0, Math.PI * 2);
+  octx.fillStyle = 'rgba(10,22,34,0.45)'; octx.fill();
+  octx.lineWidth = 3; octx.strokeStyle = '#fff'; octx.stroke();
+  octx.fillStyle = '#fff';
+  octx.textAlign = 'center'; octx.textBaseline = 'middle';
+  octx.font = '800 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  octx.fillText(String(n), p.x, p.y + 1);
+  // Label chip beside the marker (on the left when it would run off screen).
+  octx.font = '700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  const w = octx.measureText(label).width + 20, h = 28;
+  const x = p.x + 38 + w > W - 4 ? p.x - 38 - w : p.x + 38;
+  const y = p.y - h / 2;
+  octx.beginPath();
+  if (octx.roundRect) octx.roundRect(x, y, w, h, 8); else octx.rect(x, y, w, h);
+  octx.fillStyle = 'rgba(10,22,34,0.92)'; octx.fill();
+  octx.lineWidth = 1; octx.strokeStyle = 'rgba(255,255,255,0.25)'; octx.stroke();
+  octx.fillStyle = '#fff';
+  octx.textAlign = 'left';
+  octx.fillText(label, x + 10, p.y + 1);
 }
 
 let dragging = null;
@@ -602,8 +786,9 @@ function detectorTuning() {
 // ---------- settings dialog ----------
 function fillSettings() {
   els.ignoreSec.value = settings.ignoreSec;
-  els.decimals.value = String(settings.decimals);
-  els.voice.value = settings.voice;
+  renderDecimals();
+  for (const r of els.voice.querySelectorAll('input[name="voice"]')) r.checked = r.value === settings.voice;
+  els.highContrast.checked = document.body.classList.contains('hc');
   els.recordSound.checked = !!settings.recordSound;
   els.countSingles.checked = !!settings.countSingles;
   els.stopwatchCode.value = settings.stopwatchCode;
@@ -630,8 +815,39 @@ els.stopwatchCode.addEventListener('change', () => {
   lapLink.setCode(settings.stopwatchCode);
   save();
 });
-els.decimals.addEventListener('change', () => { settings.decimals = Number(els.decimals.value); save(); renderLaps(); });
-els.voice.addEventListener('change', () => { settings.voice = els.voice.value; announcer.mode = settings.voice; save(); });
+// Number stepper: −/+ around the same number field.
+function stepIgnore(d) {
+  els.ignoreSec.value = String((Number(els.ignoreSec.value) || settings.ignoreSec) + d);
+  els.ignoreSec.dispatchEvent(new Event('change'));
+}
+els.ignoreDown.addEventListener('click', () => stepIgnore(-1));
+els.ignoreUp.addEventListener('click', () => stepIgnore(1));
+// Decimals: two-button segmented control.
+function renderDecimals() {
+  for (const b of els.decimals.querySelectorAll('button')) b.setAttribute('aria-pressed', String(Number(b.dataset.dec) === settings.decimals));
+}
+els.decimals.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-dec]');
+  if (!b) return;
+  settings.decimals = Number(b.dataset.dec);
+  save(); renderDecimals(); renderLaps();
+  if (!els.summary.hidden) renderSummary();
+});
+els.voice.addEventListener('change', (e) => {
+  if (e.target.name !== 'voice') return;
+  settings.voice = e.target.value; announcer.mode = settings.voice; save();
+});
+// High contrast: the setting when set, otherwise the system's "more contrast".
+const moreContrast = window.matchMedia?.('(prefers-contrast: more)');
+function applyContrast() {
+  const on = typeof settings.highContrast === 'boolean' ? settings.highContrast : !!moreContrast?.matches;
+  document.body.classList.toggle('hc', on);
+  readColors();
+  drawOverlay();
+}
+moreContrast?.addEventListener?.('change', applyContrast);
+els.highContrast.addEventListener('change', () => { settings.highContrast = els.highContrast.checked; save(); applyContrast(); });
+applyContrast();
 els.testVoiceBtn.addEventListener('click', async () => {
   await announcer.unlock();
   announcer.sayLap(formatLap(17430, settings.decimals));
@@ -639,13 +855,21 @@ els.testVoiceBtn.addEventListener('click', async () => {
 els.resetMarkersBtn.addEventListener('click', () => {
   settings.line = structuredClone(DEFAULT_LINE); save(); drawOverlay();
 });
+const resetClear = () => { els.clearBtn.classList.remove('armed'); els.clearBtn.textContent = 'Clear laps'; };
 els.clearBtn.addEventListener('click', () => {
+  const second = arm(els.clearBtn, () => {
+    els.clearBtn.classList.add('armed');
+    els.clearBtn.textContent = 'Tap again to clear';
+  }, resetClear);
+  if (!second) return;
+  resetClear();
   recorder?.log('clear');
   counter.reset();
   // Laps timed so far stay in Settings > Sessions; timing carries on as a new session.
   if (session) { finishSession(); session = newSession({ plan, settings: sessionSettings() }); }
   announcedBlock = 0;
   renderPlan();
+  els.summary.hidden = true;
   if (state === 'timing') setState('armed');
   renderLaps();
 });
@@ -656,6 +880,7 @@ els.copyBtn.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(text);
     els.copyNote.textContent = counter.laps.length ? 'Lap times copied.' : 'No laps yet.';
+    els.copyNote.className = counter.laps.length ? 'note ok' : 'note';
   } catch {
     els.copyNote.textContent = text;
   }
@@ -771,7 +996,7 @@ els.markBtn.addEventListener('click', () => {
   recorder.log('mark', { detail: `mark ${recorder.rec.log.events.filter((e) => e.type === 'mark').length + 1}` });
   try { navigator.vibrate?.(40); } catch { /* ignored */ }
   els.markBtn.classList.add('flash');
-  setTimeout(() => els.markBtn.classList.remove('flash'), 150);
+  setTimeout(() => els.markBtn.classList.remove('flash'), 120);
   showRecInfo();
 });
 
@@ -781,7 +1006,7 @@ function showRecInfo() {
   const marks = recorder.rec.log.events.filter((e) => e.type === 'mark').length;
   const mm = String(Math.floor(s / 60)).padStart(2, '0'), ss = String(s % 60).padStart(2, '0');
   const warn = recorder.rec.problems.length ? ' · !' : '';
-  els.recInfo.textContent = `REC ${mm}:${ss} · ${formatBytes(recorder.bytes)}${marks ? ` · ${marks} marks` : ''}${warn}`;
+  els.recInfo.textContent = `● REC ${mm}:${ss} · ${formatBytes(recorder.bytes)}${marks ? ` · ${marks} marks` : ''}${warn}`;
   els.recInfo.hidden = false;
 }
 
@@ -822,7 +1047,7 @@ async function openRecordings(highlightId = null, memChunks = null) {
   if (!els.recordings.open) els.recordings.showModal();
   let sessions = [];
   try { sessions = await store.listSessions(); } catch (e) {
-    els.recList.replaceChildren(textP(`Could not open saved recordings (${e?.message || e}).`, 'warn'));
+    els.recList.replaceChildren(warnP(`Could not open saved recordings (${e?.message || e}).`));
   }
   sessions = sessions.filter((x) => x.id !== recorder?.id).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   const items = [];
@@ -830,18 +1055,67 @@ async function openRecordings(highlightId = null, memChunks = null) {
     const files = await sessionFiles(rec, rec.id === highlightId ? memChunks : null).catch(() => []);
     items.push(renderSession(rec, files));
   }
-  els.recList.replaceChildren(...(items.length ? items : [textP('No recordings yet. Tap Record + time to make one.', 'meta')]));
+  els.recList.replaceChildren(...(items.length ? items : [emptyState('i-film', 'No recordings yet', 'Tap Record + time to make one.')]));
   try {
     const est = await navigator.storage?.estimate?.();
-    els.recStorage.textContent = est?.quota ? `Using ${formatBytes(est.usage || 0)} of about ${formatBytes(est.quota)} the browser allows.` : '';
-  } catch { els.recStorage.textContent = ''; }
+    els.recStorage.hidden = !est?.quota;
+    if (est?.quota) {
+      els.recStorageText.textContent = `Using ${formatBytes(est.usage || 0)} of about ${formatBytes(est.quota)} the browser allows.`;
+      els.recStorageFill.style.width = `${Math.min(100, Math.max(1, (100 * (est.usage || 0)) / est.quota)).toFixed(1)}%`;
+    }
+  } catch { els.recStorage.hidden = true; }
 }
 
 function textP(t, cls) { const p = document.createElement('p'); p.className = cls; p.textContent = t; return p; }
+function icon(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+}
+function warnP(t) {
+  const p = document.createElement('p');
+  p.className = 'warn';
+  const span = document.createElement('span');
+  span.textContent = t;
+  p.append(icon('i-warn'), span);
+  return p;
+}
+function emptyState(iconId, title, text) {
+  const d = document.createElement('div');
+  d.className = 'empty-state';
+  const b = document.createElement('b');
+  b.textContent = title;
+  d.append(icon(iconId), b, textP(text, ''));
+  return d;
+}
+function pill(text, cls = '') {
+  const s = document.createElement('span');
+  s.className = `pill${cls ? ` ${cls}` : ''}`;
+  s.textContent = text;
+  return s;
+}
+function cardBox() {
+  const box = document.createElement('article');
+  box.className = 'card scard';
+  return box;
+}
+/** A delete button that needs two taps; onDelete runs on the second. */
+function deleteButton(label, onDelete) {
+  const del = document.createElement('button');
+  del.type = 'button'; del.className = 'btn sm danger'; del.textContent = label;
+  del.addEventListener('click', () => {
+    const second = arm(del, () => { del.classList.add('armed'); del.textContent = 'Tap again to delete'; },
+      () => { del.classList.remove('armed'); del.textContent = label; });
+    if (second) onDelete(del);
+  });
+  return del;
+}
 
 function renderSession(rec, files) {
-  const box = document.createElement('div');
-  box.className = 'recitem';
+  const box = cardBox();
   const h = document.createElement('h3');
   const d = new Date(rec.startedAt);
   h.textContent = d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -852,31 +1126,39 @@ function renderSession(rec, files) {
   const total = videos.reduce((n, f) => n + f.size, 0);
   const meta = textP(`${Math.round(lastMs / 60000)} min · ${laps} laps · ${marks} marks · ${formatBytes(total)} video`, 'meta');
   box.append(h, meta);
-  if (!rec.endedAt) box.append(textP('Stopped unexpectedly. What was saved before that is here.', 'warn'));
-  for (const p of rec.problems || []) box.append(textP(p.msg, 'warn'));
+  if (!rec.endedAt) box.append(warnP('Stopped unexpectedly. What was saved before that is here.'));
+  for (const p of rec.problems || []) box.append(warnP(p.msg));
   const list = document.createElement('div');
-  list.className = 'files';
-  for (const f of videos) list.append(fileButton(`Save video ${f.name.match(/part\d+/)?.[0].replace('part', 'part ') || ''} (${formatBytes(f.size)})`, [f]));
+  list.className = 'parts';
+  for (const f of videos) {
+    const part = f.name.match(/part(\d+)/)?.[1];
+    list.append(fileButton(`Save video${part ? ` part ${part}` : ''}`, formatBytes(f.size), [f]));
+  }
   const logs = files.filter((f) => !f.type.startsWith('video/'));
-  if (logs.length) list.append(fileButton('Save log, events and setup photo', logs));
-  const del = document.createElement('button');
-  del.type = 'button'; del.className = 'btn danger'; del.textContent = 'Delete this recording';
-  del.addEventListener('click', async () => {
-    if (del.dataset.armed !== '1') { del.dataset.armed = '1'; del.textContent = 'Tap again to delete'; return; }
-    del.disabled = true;
-    try { await store.deleteSession(rec.id); box.remove(); } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; }
-  });
-  list.append(del);
+  if (logs.length) list.append(fileButton('Save log, events and setup photo', '', logs));
   box.append(list);
+  const row = document.createElement('div');
+  row.className = 'btn-row';
+  row.append(deleteButton('Delete this recording', async (del) => {
+    del.disabled = true;
+    try { await store.deleteSession(rec.id); box.remove(); } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; del.disabled = false; }
+  }));
+  box.append(row);
   return box;
 }
 
-function fileButton(label, files) {
+function fileButton(label, size, files) {
   const b = document.createElement('button');
-  b.type = 'button'; b.className = 'btn'; b.textContent = label;
+  b.type = 'button'; b.className = 'btn sm part';
+  const name = document.createElement('span');
+  name.textContent = label;
+  const sz = document.createElement('span');
+  sz.className = 'sz';
+  sz.textContent = size;
+  b.append(name, sz);
   b.addEventListener('click', () => {
     shareOrDownload(files).then((how) => {
-      if (how === 'shared' || how === 'downloaded') b.textContent = `${label} ✓`;
+      if (how === 'shared' || how === 'downloaded') { b.classList.add('saved'); sz.textContent = size ? `${size} ✓` : 'Saved ✓'; }
     });
   });
   return b;
@@ -892,9 +1174,12 @@ els.sendBtn.addEventListener('click', () => {
   if (lastSession) sendToPacemaker(lastSession, els.sendBtn, els.sendNote);
 });
 
+// Button states: idle → .busy "Sending…" → .done "Sent ✓"; on failure the
+// label says "Try sending again" and the note explains.
 async function sendToPacemaker(s, btn, note) {
-  const label = btn.textContent;
   btn.disabled = true;
+  btn.classList.remove('done');
+  btn.classList.add('busy');
   btn.textContent = 'Sending…';
   note.hidden = true;
   try {
@@ -902,19 +1187,27 @@ async function sendToPacemaker(s, btn, note) {
     s.sentAt = Date.now();
     s.sent = answer;
     await store.saveTiming(s).catch(() => {});
+    btn.classList.add('done');
     btn.textContent = 'Sent ✓';
     note.textContent = 'Sent to Pacemaker.';
-    note.className = 'note';
+    note.className = note.dataset.base ? `${note.dataset.base} ok` : 'note ok';
     note.hidden = false;
     openPacemaker(answer);
   } catch {
-    btn.textContent = label;
+    btn.textContent = 'Try sending again';
     note.textContent = SEND_FAILED;
-    note.className = 'warn';
+    note.className = note.dataset.base ? `${note.dataset.base} err` : 'note err';
     note.hidden = false;
   } finally {
+    btn.classList.remove('busy');
     btn.disabled = false;
   }
+}
+/** Back to "Send to Pacemaker" when a new session finishes. */
+function resetSendBtn() {
+  els.sendBtn.className = 'btn main send full';
+  els.sendBtn.textContent = 'Send to Pacemaker';
+  els.sendNote.hidden = true;
 }
 
 function openPacemaker(answer) {
@@ -933,57 +1226,66 @@ async function openSessions() {
   if (!els.sessions.open) els.sessions.showModal();
   let list = [];
   try { list = await store.listTimings(); } catch (e) {
-    els.sessList.replaceChildren(textP(`Could not open saved sessions (${e?.message || e}).`, 'warn'));
+    els.sessList.replaceChildren(warnP(`Could not open saved sessions (${e?.message || e}).`));
     return;
   }
   list.sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt));
-  els.sessList.replaceChildren(...(list.length ? list.map(renderTiming) : [textP('No sessions yet. Every Start timing is kept here.', 'meta')]));
+  els.sessList.replaceChildren(...(list.length ? list.map(renderTiming) : [emptyState('i-list', 'No sessions yet', 'Every Start timing is kept here.')]));
 }
 
 function renderTiming(s) {
-  const box = document.createElement('div');
-  box.className = 'recitem';
+  const box = cardBox();
   const h = document.createElement('h3');
   h.textContent = new Date(s.startedAt ?? s.createdAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const active = s.id === session?.id;
-  const bits = [`${s.laps.length} ${s.laps.length === 1 ? 'lap' : 'laps'}`, formatDuration(sessionDuration(s))];
-  if (s.plan?.name) bits.push(s.plan.name);
-  if (s.sentAt) bits.push('Sent');
-  if (active) bits.push('timing now');
-  box.append(h, textP(bits.join(' · '), 'meta'));
-  if (!s.endedAt && !active) box.append(textP('Stopped unexpectedly. The laps up to then are here.', 'warn'));
+  box.append(h, textP(`${s.laps.length} ${s.laps.length === 1 ? 'lap' : 'laps'} · ${formatDuration(sessionDuration(s))}`, 'meta'));
+  const pills = document.createElement('div');
+  pills.className = 'pills';
+  if (active) pills.append(pill('Timing now', 'live'));
+  if (s.sentAt) pills.append(pill('Sent ✓', 'ok'));
+  if (s.plan?.name) pills.append(pill(s.plan.name));
+  if (pills.childElementCount) box.append(pills);
+  if (!s.endedAt && !active) box.append(warnP('Stopped unexpectedly. The laps up to then are here.'));
   const row = document.createElement('div');
-  row.className = 'files';
-  const note = textP('', 'warn');
+  row.className = 'btn-row';
+  const note = textP('', 'note');
+  note.dataset.base = 'note';
+  note.style.textAlign = 'left';
   note.hidden = true;
   if (!active && s.laps.length) {
     const send = document.createElement('button');
-    send.type = 'button'; send.className = 'btn';
+    send.type = 'button'; send.className = 'btn sm send';
     send.textContent = s.sentAt ? 'Send to Pacemaker again' : 'Send to Pacemaker';
     send.addEventListener('click', () => sendToPacemaker(s, send, note));
     row.append(send);
   }
   if (s.sent?.web) {
     const a = document.createElement('a');
-    a.className = 'btn link'; a.href = s.sent.web; a.textContent = 'Open in Pacemaker';
+    a.className = 'btn sm'; a.href = s.sent.web; a.textContent = 'Open in Pacemaker';
     row.append(a);
   }
   if (!active) {
-    const del = document.createElement('button');
-    del.type = 'button'; del.className = 'btn danger'; del.textContent = 'Delete';
-    del.addEventListener('click', async () => {
-      if (del.dataset.armed !== '1') { del.dataset.armed = '1'; del.textContent = 'Tap again to delete'; return; }
+    row.append(deleteButton('Delete', async (del) => {
       del.disabled = true;
       try {
         await store.deleteTiming(s.id);
         if (lastSession?.id === s.id) { lastSession = null; els.sendBtn.hidden = true; }
         box.remove();
-      } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; }
-    });
-    row.append(del);
+      } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; del.disabled = false; }
+    }));
   }
   box.append(row, note);
   return box;
+}
+
+// Back arrow in Sessions / Recordings returns to Settings.
+for (const d of [els.sessions, els.recordings]) {
+  d.querySelector('[data-back]').addEventListener('click', () => {
+    d.close();
+    fillSettings();
+    els.copyNote.hidden = true;
+    els.settings.showModal();
+  });
 }
 
 function formatDuration(ms) {
