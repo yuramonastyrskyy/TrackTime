@@ -58,7 +58,7 @@
      drawn at this zoom, so one number makes the whole UI larger or smaller.
      1 = the designer's original sizes. Tap targets and safe areas below are
      held to a usable size whatever the zoom. */
-  --tt-ui-scale: 0.69;
+  --tt-ui-scale: 0.8;
 
   /* Space, radius, hit sizes (in unzoomed px; the floors are real px) */
   --tt-s1: 4px; --tt-s2: 8px; --tt-s3: 12px; --tt-s4: 16px; --tt-s5: 24px; --tt-s6: 32px;
