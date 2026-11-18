@@ -64,6 +64,9 @@ const counter = new LapCounter(settings.ignoreSec * 1000);
 let state = 'off';           // off | setup | learning | armed | timing
 let stream = null;
 let detector = null, sampler = null, samples = null;
+// Plan strip stepping aside in Set up (see keepPlanOffMarkers).
+let planOverMarkers = false, planTop = 0;
+const planShown = () => !!plan && els.summary.hidden && !(state === 'setup' && planOverMarkers);
 let proc = null, procCtx = null, glSampler = null, readerNote = '';
 let timeSource = null;
 let wakeLock = null;
@@ -115,8 +118,10 @@ function setPlan(p) {
   } catch { /* private mode */ }
   if (session && !session.laps.length) { session.plan = p; persistSession(); }
   announcedBlock = 0;
+  planTop = 0; planOverMarkers = false;
   renderPlan();
   renderLaps();
+  if (state === 'setup') drawOverlay(); // may step the new strip aside
 }
 function readPlanLink() {
   const r = planFromHash(location.hash);
@@ -153,7 +158,7 @@ function currentProgress() {
 // Plan strip. Rebuilt on lap events and once a second for the time left;
 // only text and a few classes change, never the layout around it.
 function renderPlan() {
-  els.planStrip.hidden = !plan || !els.summary.hidden;
+  els.planStrip.hidden = !planShown();
   if (!plan) return;
   const t = boardParts(plan, currentProgress());
   setText(els.planName, plan.name);
@@ -279,7 +284,7 @@ function renderLayout() {
   els.setupHint.hidden = !setupEmpty || hintOverMarkers;
   // The lap row (Undo + chips) appears with the first lap.
   els.lapStrip.hidden = !els.summary.hidden || !counter.laps.length;
-  els.planStrip.hidden = !plan || !els.summary.hidden;
+  els.planStrip.hidden = !planShown();
 }
 
 // ---------- camera ----------
@@ -718,9 +723,37 @@ function drawOverlay() {
   octx.beginPath(); octx.moveTo(a.x, a.y); octx.lineTo(b.x, b.y); octx.stroke();
 
   const editable = state === 'setup';
-  if (editable) keepHintOffMarkers(Math.min(a.y, b.y));
-  chips.top = drawHandle(a, 1, 'Top of track', editable, W);
-  chips.inner = drawHandle(b, 2, 'Inner edge', editable, W);
+  let free = null;
+  if (editable) {
+    keepHintOffMarkers(Math.min(a.y, b.y));
+    keepPlanOffMarkers(Math.max(a.y, b.y));
+    free = freeBand();
+  }
+  chips.top = drawHandle(a, 1, 'Top of track', editable, W, free);
+  chips.inner = drawHandle(b, 2, 'Inner edge', editable, W, free);
+}
+
+// Same for the plan strip at the bottom: in Set up it steps aside while a
+// ring is under it (there is nothing to read on it before timing anyway) and
+// comes back when both rings are above it. It always shows while timing.
+function keepPlanOffMarkers(bottomY) {
+  if (!plan || !els.summary.hidden) return;
+  if (!els.planStrip.hidden) planTop = els.panel.offsetTop + els.planStrip.offsetTop;
+  if (!planTop) return;
+  const over = bottomY + 34 > planTop - 6;
+  if (over !== planOverMarkers) {
+    planOverMarkers = over;
+    els.planStrip.hidden = !planShown();
+  }
+}
+/**
+ * The picture band between the top card and the bottom buttons. Label chips
+ * are kept inside it, so even a ring that sits under a card or a button has a
+ * handle you can reach. Read only on Set up draws (drags, state changes).
+ */
+function freeBand() {
+  // The HUD and the panel include their faded edges, which also dim the picture.
+  return { top: els.hud.offsetTop + els.hud.offsetHeight + 2, bottom: els.panel.offsetTop - 2 };
 }
 
 // The Set up hint card sits under the status card. When a ring (or its label)
@@ -748,7 +781,7 @@ function readColors() {
 }
 readColors();
 
-function drawHandle(p, n, label, editable, W) {
+function drawHandle(p, n, label, editable, W, free) {
   if (!editable) {
     // Locked while timing: a small dot, so the line stays visible.
     octx.beginPath(); octx.arc(p.x, p.y, 6, 0, Math.PI * 2);
@@ -772,17 +805,24 @@ function drawHandle(p, n, label, editable, W) {
   octx.font = '700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   const w = octx.measureText(label).width + 33, h = 28;
   const x = p.x + 38 + w > W - 4 ? p.x - 38 - w : p.x + 38;
-  const y = p.y - h / 2;
+  let y = p.y - h / 2;
+  if (free && free.bottom - free.top > h) y = Math.min(Math.max(y, free.top), free.bottom - h);
+  const cy = y + h / 2;
+  if (Math.abs(cy - p.y) > 4) {
+    // The chip was pulled into view: a thin tether shows which ring it moves.
+    octx.beginPath(); octx.moveTo(p.x + Math.sign(x - p.x) * 22, p.y); octx.lineTo(x < p.x ? x + w : x, cy);
+    octx.lineWidth = 2; octx.strokeStyle = 'rgba(255,255,255,0.6)'; octx.stroke();
+  }
   octx.beginPath();
   if (octx.roundRect) octx.roundRect(x, y, w, h, 8); else octx.rect(x, y, w, h);
   octx.fillStyle = 'rgba(10,22,34,0.92)'; octx.fill();
   octx.lineWidth = 1; octx.strokeStyle = 'rgba(255,255,255,0.25)'; octx.stroke();
   // Grip dots: the label is a handle too, so a finger on it leaves the ring in view.
   octx.fillStyle = 'rgba(255,255,255,0.55)';
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) octx.fillRect(x + 9 + j * 5, p.y - 6 + i * 5, 2.5, 2.5);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) octx.fillRect(x + 9 + j * 5, cy - 6 + i * 5, 2.5, 2.5);
   octx.fillStyle = '#fff';
   octx.textAlign = 'left';
-  octx.fillText(label, x + 23, p.y + 1);
+  octx.fillText(label, x + 23, cy + 1);
   return { x, y, w, h };
 }
 
@@ -824,6 +864,7 @@ els.overlay.addEventListener('pointercancel', endDrag);
 window.addEventListener('resize', () => {
   // Measure the hint again at the new size.
   hintBottom = 0; hintOverMarkers = false; els.setupHint.hidden = !hintWanted;
+  planTop = 0; planOverMarkers = false; els.planStrip.hidden = !planShown();
   drawOverlay();
 });
 els.video.addEventListener('resize', drawOverlay);
