@@ -82,13 +82,16 @@ const lapLink = new LapSender({ ...linkOverrides(location.search), onState: rend
 lapLink.setCode(settings.stopwatchCode);
 function renderLink(s) {
   els.linkPill.hidden = !s.code;
-  els.linkPill.textContent = s.connected ? 'stopwatch ✓' : 'stopwatch …';
+  els.linkPill.textContent = s.direct === 'open' ? 'stopwatch ✓ direct' : s.connected ? 'stopwatch ✓' : 'stopwatch …';
   els.linkPill.className = s.connected ? 'ok' : '';
   els.linkStatus.hidden = !s.code;
   els.linkStatus.classList.toggle('ok', !!s.connected);
   if (!s.code) { els.linkStatusText.textContent = ''; return; }
   const up = s.links.filter((l) => l.status === 'open').length;
   let text = s.connected ? `Connected (${up} of ${s.links.length} relays).` : 'Connecting…';
+  if (s.direct === 'open') text += ' Direct ✓ (works without internet).';
+  else if (s.direct) text += ' Direct: setting up…';
+  if (s.pending) text += ` Waiting to send: ${s.pending}.`;
   if (s.lastSent) {
     const when = new Date(s.lastSent.at).toLocaleTimeString();
     text += ` Last sent: ${s.lastSent.lap ? `lap ${s.lastSent.lap}` : 'first crossing'} at ${when}.`;
