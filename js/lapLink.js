@@ -254,7 +254,9 @@ export class DirectLink {
     try {
       await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
       this.theirs = describeCandidates(m.sdp);
-      this.note('stopwatch answered');
+      // The network check may have started while the answer was being applied.
+      const ice = pc.iceConnectionState;
+      if (this.pc === pc && this.status !== 'open') this.note(ice === 'new' ? 'stopwatch answered' : `network check: ${ice}`);
     } catch {
       if (this.pc === pc && pc.signalingState !== 'stable') { this.note('bad answer from the stopwatch'); this.close(); }
     }
