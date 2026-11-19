@@ -1,0 +1,14 @@
+# Any push to a branch, or a PR opening or closing, finishes this run, which
+# makes "Pages" (pages.yml) rebuild the site with the newest open PR under
+# /preview/. It does nothing by itself.
+name: Preview trigger
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    types: [opened, reopened, closed]
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Pages will rebuild the preview."
