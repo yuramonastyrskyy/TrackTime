@@ -4,6 +4,8 @@ import {
 } from './detector.js';
 import { Announcer } from './speech.js';
 import { GLSampler } from './glsampler.js';
+import { buildStripLine, unionBox, readStripRGBA, StripBuffer, PF } from './photofinish.js';
+import { PhotoFinishViewer } from './finishView.js';
 import {
   SessionRecorder, sessionFiles, shareOrDownload, store, formatBytes,
 } from './recorder.js';
@@ -27,7 +29,7 @@ const els = {
   copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'), highContrast: $('highContrast'),
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkStatusText: $('linkStatusText'), linkPill: $('linkPill'),
-  restBetweenLaps: $('restBetweenLaps'),
+  restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), finish: $('finish'),
   planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planMain: $('planMain'),
   planSwatch: $('planSwatch'), planWhere: $('planWhere'), planTarget: $('planTarget'), planLeft: $('planLeft'),
   planSub: $('planSub'), planDone: $('planDone'), planDoneSub: $('planDoneSub'),
@@ -48,7 +50,7 @@ function setText(el, text) { if (el.textContent !== text) el.textContent = text;
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
@@ -68,6 +70,11 @@ let detector = null, sampler = null, samples = null;
 let planOverMarkers = false, planTop = 0;
 const planShown = () => !!plan && els.summary.hidden && !(state === 'setup' && planOverMarkers);
 let proc = null, procCtx = null, glSampler = null, readerNote = '';
+let canvasBox = null;        // part of the frame the canvas path copies (detector + photo-finish pixels)
+// Photo-finish (js/photofinish.js): one colour column of the finish line per frame.
+let strip = null, stripCol = null, stripBuf = null;
+const finishes = new Map();  // crossing number (0 = start, n = lap n) -> { blob, ... }
+let finishPending = [];      // crossings still collecting the frames after them
 let timeSource = null;
 let wakeLock = null;
 let fpsFrames = 0, fpsSince = performance.now();
@@ -296,16 +303,11 @@ async function startCamera() {
     return;
   }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        facingMode: { ideal: 'environment' },
-        // 720p at 30 fps: plenty for the detector (it works at 960 px) and much
-        // lighter for the phone than 1080p/60 while it is also recording.
-        width: { ideal: 1280 }, height: { ideal: 720 },
-        frameRate: { ideal: 30 },
-      },
-    });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: cameraConstraints(wantedFps()) });
+    // Some phones only give 60 fps at a small size. The detector needs the
+    // detail more than the frame rate, so then go back to 720p at 30.
+    const cam = safe(() => stream.getVideoTracks()[0].getSettings());
+    if (wantedFps() > 30 && cam && Math.min(cam.width || 720, cam.height || 720) < 700) await setCameraFps(30);
   } catch (err) {
     if (err && err.name === 'NotAllowedError') {
       showCameraError('Camera access was blocked', 'Allow the camera for this app in the phone settings, then try again.');
@@ -329,6 +331,27 @@ async function startCamera() {
   });
   setState('setup');
   scheduleFrame();
+}
+// 720p: plenty for the detector (it works at 960 px). 60 fps when the phone
+// offers it, for a finer photo-finish; Record + time always uses 30 fps (half
+// the video size). The fps pill shows what the camera really gives.
+function wantedFps() { return settings.fps60 !== false && !recorder ? 60 : 30; }
+function cameraConstraints(fps) {
+  return {
+    facingMode: { ideal: 'environment' },
+    width: { ideal: 1280 }, height: { ideal: 720 },
+    frameRate: fps > 30 ? { ideal: fps } : { ideal: 30, max: 30 },
+  };
+}
+/** Asks the running camera for a new frame rate; keeps going on refusal. */
+async function setCameraFps(fps) {
+  const vt = stream?.getVideoTracks()[0];
+  if (!vt) return;
+  const now = safe(() => vt.getSettings().frameRate);
+  if (now && (fps > 30 ? now > 31 : now <= 31)) return;
+  try { await vt.applyConstraints(cameraConstraints(fps)); } catch (e) {
+    recorder?.log('detector', { detail: `camera ${fps} fps refused (${e?.name || e})` });
+  }
 }
 function showCameraError(title, msg) {
   els.cameraErrorTitle.textContent = title;
@@ -384,7 +407,11 @@ function onFrame(now, meta) {
         recorder?.log('rest', { frameT: Math.round(t), detail: `detection paused until ${(RESUME_EARLY_MS / 1000).toFixed(1)} s before the window ends` });
         drawOverlay();
       }
+      // The photo-finish still needs the frames just after a crossing: read
+      // the pixels, but leave the detector alone (laps stay exactly the same).
+      if (finishPending.length) { readFrame(); stripBuf?.push(t, stripCol); }
       lastFrameT = t;
+      takeFinishes(t);
       scheduleFrame();
       return;
     }
@@ -393,6 +420,7 @@ function onFrame(now, meta) {
       recorder?.log('resume', { frameT: Math.round(t) });
     }
     readFrame();
+    stripBuf?.push(t, stripCol);
     const relearnsBefore = detector.relearns, singlesBefore = detector.singles.length;
     const hit = detector.push(samples, t);
     lastFrameT = t;
@@ -410,6 +438,7 @@ function onFrame(now, meta) {
     }
     if (state === 'learning' && !detector.learning) setState(counter.startTime === null ? 'armed' : 'timing');
     if (hit !== null) onCrossing(hit);
+    takeFinishes(t);
   }
   // In Set up nothing on the overlay changes between frames (no detector), so
   // it is only redrawn on a drag, a resize or a state change.
@@ -434,10 +463,11 @@ const CALIBRATE_FRAMES = 40;
 let readTimes = null; // { gpu: [], canvas: [] } while calibrating
 
 function readCanvas() {
-  const { x, y, w, h } = sampler.box;
+  const box = canvasBox, { x, y, w, h } = box;
   procCtx.drawImage(els.video, x / proc.scale, y / proc.scale, w / proc.scale, h / proc.scale, 0, 0, w, h);
   const img = procCtx.getImageData(0, 0, w, h);
-  readSamplesRGBA(sampler, img.data, samples);
+  readSamplesRGBA({ xs: sampler.xs, ys: sampler.ys, box }, img.data, samples);
+  if (strip) readStripRGBA(strip, box, img.data, stripCol);
 }
 
 function readFrame() {
@@ -445,7 +475,7 @@ function readFrame() {
   const useGpu = !readTimes || readTimes.gpu.length <= readTimes.canvas.length;
   const t0 = performance.now();
   if (useGpu) {
-    try { glSampler.read(els.video, samples); } catch (err) {
+    try { glSampler.read(els.video, samples, strip ? stripCol : null); } catch (err) {
       glSampler = null; readTimes = null;
       recorder?.log('detector', { detail: `GPU sampling failed (${err?.message || err}); using canvas` });
       readCanvas();
@@ -472,15 +502,20 @@ function prepareDetector({ keepClock = false } = {}) {
   // Samples are placed on a virtual frame scaled to 960 px on the long side.
   proc = { width: Math.round(vw * s), height: Math.round(vh * s), scale: s };
   sampler = buildSampler(proc.width, proc.height, settings.line);
+  try { strip = buildStripLine(proc.width, proc.height, settings.line); } catch { strip = null; }
+  stripCol = strip ? new Uint8Array(strip.count * 3) : null;
+  stripBuf = strip ? new StripBuffer(strip.count, 600) : null; // 600 frames: 10 s at 60 fps
+  finishPending = [];
+  canvasBox = strip ? unionBox(sampler.box, strip.box) : sampler.box;
   const canvas = document.createElement('canvas');
-  canvas.width = sampler.box.w;
-  canvas.height = sampler.box.h;
+  canvas.width = canvasBox.w;
+  canvas.height = canvasBox.h;
   procCtx = canvas.getContext('2d', { willReadFrequently: true });
   glSampler = null;
   readTimes = null;
   const forced = new URLSearchParams(location.search).get('sampler'); // 'canvas' or 'gpu' for testing
   if (forced !== 'canvas') {
-    try { glSampler = new GLSampler(sampler); } catch { glSampler = null; }
+    try { glSampler = new GLSampler(sampler, strip); } catch { glSampler = null; }
     if (glSampler && forced !== 'gpu') readTimes = { gpu: [], canvas: [] };
   }
   samples = new Uint8Array(sampler.sampleCount);
@@ -510,6 +545,7 @@ function startTiming() {
   announcer.unlock(); // inside the tap, so phones allow sound
   counter.ignoreMs = settings.ignoreSec * 1000;
   counter.reset();
+  finishes.clear();
   finishSession();
   session = newSession({ plan, settings: sessionSettings() });
   announcedBlock = 0;
@@ -523,6 +559,7 @@ function startTiming() {
 }
 
 function stopTiming() {
+  takeFinishes(lastFrameT, true);
   detector = null;
   finishSession();
   releaseWakeLock();
@@ -572,6 +609,9 @@ function onCrossing(t) {
     if (r.type === 'ignored') fields.sinceMs = Math.round(r.since);
     recorder.log(r.type, fields);
   }
+  if ((r.type === 'start' || r.type === 'lap') && stripBuf) {
+    finishPending.push({ key: r.type === 'start' ? 0 : r.lap, at: t, ms: r.type === 'lap' ? r.ms : null, epoch: frameEpoch(t) });
+  }
   if (r.type === 'start' || r.type === 'lap') {
     const at = frameEpoch(t);
     lapLink.sendCrossing(at, r.type === 'start' ? 0 : r.lap);
@@ -592,6 +632,125 @@ function onCrossing(t) {
     renderPlan();
   }
 }
+
+// ---------- photo-finish ----------
+// Each counted crossing gets a line-scan picture from 1 s before to 2 s after
+// it (js/photofinish.js). It is built once the frames after the crossing are
+// in, kept as a JPEG for this session, and saved with a recording. It is only
+// shown: lap times never change from it.
+function takeFinishes(t, force = false) {
+  if (!finishPending.length || !stripBuf) return;
+  const ready = finishPending.filter((p) => force || t >= p.at + PF.afterMs);
+  if (!ready.length) return;
+  finishPending = finishPending.filter((p) => !ready.includes(p));
+  for (const p of ready) buildFinish(p);
+}
+function buildFinish(p) {
+  const pic = stripBuf.picture(p.at - PF.beforeMs, p.at + PF.afterMs);
+  if (!pic) return;
+  const c = document.createElement('canvas');
+  c.width = pic.width; c.height = pic.height;
+  c.getContext('2d').putImageData(new ImageData(pic.rgba, pic.width, pic.height), 0, 0);
+  const frames = pic.frames.map((f) => f + pic.t0 - p.at);
+  const gaps = frames.slice(1).map((f, i) => f - frames[i]).sort((a, b) => a - b);
+  const frameMs = gaps.length ? gaps[gaps.length >> 1] : null;
+  const rec = recorder;
+  c.toBlob((blob) => {
+    if (!blob) return;
+    // Undo/Clear may have removed this crossing while the picture was encoded.
+    const lapNow = p.key === 0 ? counter.startTime === p.at : counter.laps.some((l) => l.lap === p.key && l.at === p.at);
+    if (!lapNow) return;
+    finishes.set(p.key, {
+      key: p.key, ms: p.ms, at: p.at, epoch: p.epoch, blob,
+      width: pic.width, height: pic.height, t0: pic.t0 - p.at, stepMs: pic.stepMs,
+      frames, frameMs, rowInner: strip?.rowInner ?? 0,
+    });
+    rec?.addFinish(p.key === 0 ? 'start' : `lap${String(p.key).padStart(3, '0')}`, blob);
+    renderLaps();
+    if (els.finish.open && finishKey === p.key) openFinish(p.key);
+  }, 'image/jpeg', 0.9);
+}
+function dropFinish(key) {
+  finishes.delete(key);
+  finishPending = finishPending.filter((p) => p.key !== key);
+}
+
+let finishKey = null;
+const finishView = new PhotoFinishViewer($('pfCanvas'), { onCursor: renderFinishReadout });
+function finishKeys() { return [...finishes.keys()].sort((a, b) => a - b); }
+async function openFinish(key) {
+  finishKey = key;
+  const f = finishes.get(key);
+  const lap = counter.laps.find((l) => l.lap === key);
+  $('pfSub').textContent = key === 0 ? 'Start (first crossing)'
+    : `Lap ${key}${lap ? ` · ${formatLap(lap.ms, 2)}` : ''}`;
+  const keys = finishKeys(), i = keys.indexOf(key);
+  $('pfPrev').disabled = i <= 0 && !(i < 0 && keys.some((k) => k < key));
+  $('pfNext').disabled = i < 0 ? !keys.some((k) => k > key) : i >= keys.length - 1;
+  $('pfEmpty').hidden = !!f;
+  $('pfStage').hidden = !f;
+  $('pfTools').hidden = !f;
+  if (!els.finish.open) els.finish.showModal();
+  if (!f) {
+    const waiting = finishPending.some((p) => p.key === key);
+    $('pfEmpty').textContent = waiting ? 'Building the picture… it is ready 2 s after the crossing.'
+      : 'No photo-finish for this crossing. Pictures are kept only while this page is open, from the moment timing started.';
+    $('pfRead').textContent = '';
+    $('pfNote').textContent = '';
+    finishView.clear();
+    return;
+  }
+  let bitmap;
+  try { bitmap = await createImageBitmap(f.blob); } catch {
+    bitmap = await new Promise((res) => { const im = new Image(); im.onload = () => res(im); im.src = URL.createObjectURL(f.blob); });
+  }
+  if (finishKey !== key) return;
+  finishView.show({ ...f, bitmap });
+  const fps = f.frameMs ? Math.round(1000 / f.frameMs) : null;
+  $('pfNote').textContent = `${fps ? `${fps} fps: one frame every ${Math.round(f.frameMs)} ms. ` : ''}`
+    + 'Time runs left to right; the dashed line is where the lap was timed. '
+    + 'Between frames the picture blends the two nearest frames. Moving the cursor never changes the lap time.';
+}
+function renderFinishReadout(ms) {
+  const f = finishes.get(finishKey);
+  if (!f) { $('pfRead').textContent = ''; return; }
+  const sign = ms === 0 ? '±' : ms > 0 ? '+' : '−';
+  const off = `${sign}${(Math.abs(ms) / 1000).toFixed(3)} s`;
+  const lap = counter.laps.find((l) => l.lap === finishKey);
+  const b = document.createElement('b'); b.textContent = off;
+  const parts = [b, document.createTextNode(' from the timed crossing')];
+  if (lap && Math.abs(ms) >= 1) {
+    parts.push(document.createTextNode(` · lap to the cursor ${formatLap(lap.ms + ms, 2)}`));
+  }
+  $('pfRead').replaceChildren(...parts);
+}
+function stepFinish(d) {
+  const keys = finishKeys();
+  if (!keys.length) return;
+  const i = keys.indexOf(finishKey);
+  const next = i >= 0 ? keys[i + d] : (d > 0 ? keys.find((k) => k > finishKey) : [...keys].reverse().find((k) => k < finishKey));
+  if (next !== undefined) openFinish(next);
+}
+$('pfPrev').addEventListener('click', () => stepFinish(-1));
+$('pfNext').addEventListener('click', () => stepFinish(1));
+$('pfZoomIn').addEventListener('click', () => finishView.zoom(0.5));
+$('pfZoomOut').addEventListener('click', () => finishView.zoom(2));
+$('pfFit').addEventListener('click', () => finishView.fit());
+$('pfFlip').addEventListener('click', () => {
+  settings.pfFlip = !settings.pfFlip; save();
+  $('pfFlip').setAttribute('aria-pressed', String(!!settings.pfFlip));
+  finishView.setFlip(settings.pfFlip);
+});
+$('pfFlip').setAttribute('aria-pressed', String(!!settings.pfFlip));
+finishView.setFlip(!!settings.pfFlip);
+els.laps.addEventListener('click', (e) => {
+  const li = e.target.closest('li[data-lap]');
+  if (li) openFinish(Number(li.dataset.lap));
+});
+els.lastLap.addEventListener('click', () => {
+  const last = counter.laps[counter.laps.length - 1];
+  if (last) openFinish(last.lap);
+});
 
 // "Say gap to target": the gap of the lap just finished, and "next block" when
 // the plan moved on. Nothing extra without a plan or with the setting off.
@@ -620,6 +779,7 @@ els.undoBtn.addEventListener('click', () => {
   if (!second) return;
   resetUndo();
   const undone = counter.undoLast();
+  dropFinish(undone ? undone.lap : 0);
   if (session) { sessionUndo(session); persistSession(); }
   if (plan) announcedBlock = currentProgress().index;
   renderPlan();
@@ -665,6 +825,8 @@ function renderLaps() {
     const r = results[l.lap - 1];
     const t = bandTag(r, dec);
     li.className = `chip${k === 0 ? ' latest' : ''}${l.ms === best ? ' best' : ''}${r?.band ? ` c-${r.band}` : ''}`;
+    li.dataset.lap = String(l.lap);
+    if (finishes.has(l.lap)) li.classList.add('pf');
     const n = document.createElement('span');
     n.className = 'n';
     n.textContent = String(l.lap);
@@ -909,6 +1071,7 @@ function fillSettings() {
   els.stopwatchCode.value = settings.stopwatchCode;
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
+  els.fps60.checked = settings.fps60 !== false;
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -981,6 +1144,7 @@ els.clearBtn.addEventListener('click', () => {
   resetClear();
   recorder?.log('clear');
   counter.reset();
+  finishes.clear(); finishPending = [];
   // Laps timed so far stay in Settings > Sessions; timing carries on as a new session.
   if (session) { finishSession(); session = newSession({ plan, settings: sessionSettings() }); }
   announcedBlock = 0;
@@ -1044,6 +1208,10 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 els.recordSound.addEventListener('change', () => { settings.recordSound = els.recordSound.checked; save(); });
 els.restBetweenLaps.addEventListener('change', () => { settings.restBetweenLaps = els.restBetweenLaps.checked; save(); });
 els.sayGap.addEventListener('change', () => { settings.sayGap = els.sayGap.checked; save(); });
+els.fps60.addEventListener('change', () => {
+  settings.fps60 = els.fps60.checked; save();
+  if (stream && !isActive()) setCameraFps(wantedFps());
+});
 els.countSingles.addEventListener('change', () => {
   settings.countSingles = els.countSingles.checked;
   save();
@@ -1069,6 +1237,7 @@ els.recBtn.addEventListener('click', async () => {
         if (micTrack) tracks.push(micTrack);
       } catch { micTrack = null; }
     }
+    await setCameraFps(30); // recordings stay at 30 fps (half the size)
     const vt = stream.getVideoTracks()[0];
     recorder = new SessionRecorder(new MediaStream(tracks), {
       settings: { ignoreSec: settings.ignoreSec, decimals: settings.decimals, voice: settings.voice, recordSound: !!micTrack, restBetweenLaps: settings.restBetweenLaps !== false },
@@ -1093,6 +1262,7 @@ els.recBtn.addEventListener('click', async () => {
     if (recorder) { try { await recorder.stop(); } catch { /* ignored */ } }
     recorder = null;
     stopMic();
+    setCameraFps(wantedFps());
   } finally {
     els.recBtn.disabled = false;
   }
@@ -1136,6 +1306,7 @@ async function stopRecording({ show = true } = {}) {
   const rec = await r.stop();
   stopMic();
   if (show) openRecordings(rec.id, r.memChunks);
+  setCameraFps(wantedFps());
 }
 
 async function snapshotSetup() {
@@ -1250,8 +1421,11 @@ function renderSession(rec, files) {
     const part = f.name.match(/part(\d+)/)?.[1];
     box.append(fileButton(`Save video${part ? ` part ${part}` : ''}`, formatBytes(f.size), [f]));
   }
-  const logs = files.filter((f) => !f.type.startsWith('video/'));
+  const isFinish = (f) => f.name.includes('-finish-');
+  const logs = files.filter((f) => !f.type.startsWith('video/') && !isFinish(f));
   if (logs.length) box.append(fileButton('Save log, events and setup photo', formatBytes(logs.reduce((n, f) => n + f.size, 0)), logs));
+  const pics = files.filter(isFinish);
+  if (pics.length) box.append(fileButton(`Save photo-finish pictures (${pics.length})`, formatBytes(pics.reduce((n, f) => n + f.size, 0)), pics));
   box.append(deleteButton('Delete this recording', async (del) => {
     del.disabled = true;
     try { await store.deleteSession(rec.id); box.remove(); } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; del.disabled = false; }
