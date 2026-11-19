@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=23">
+  <link rel="stylesheet" href="styles.css?v=24">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -215,6 +215,17 @@
             </div>
           </section>
 
+          <section class="group" aria-labelledby="gFinish">
+            <h3 id="gFinish" class="group-h">Photo-finish</h3>
+            <div class="card">
+              <label class="row">
+                <span class="lbl"><b>Camera at 60 fps</b><small>Sharper photo-finish when the phone offers it; the fps pill shows what you get. Record + time always uses 30 fps. Tap a lap to see its picture.</small></span>
+                <input id="fps60" class="sw" type="checkbox" checked>
+              </label>
+              <p id="camInfo" class="row meta" role="status"></p>
+            </div>
+          </section>
+
           <section class="group" aria-labelledby="gVoice">
             <h3 id="gVoice" class="group-h">Voice</h3>
             <div id="voice" class="card" role="radiogroup" aria-labelledby="gVoice">
@@ -278,6 +289,30 @@
       </form>
     </dialog>
 
+    <dialog id="finish" class="sheet finish" aria-labelledby="finishTitle">
+      <form method="dialog" class="sheet-form">
+        <div class="grab"></div>
+        <header class="sheet-head">
+          <button id="pfPrev" class="back" type="button" aria-label="Previous crossing"><svg aria-hidden="true"><use href="#i-back"/></svg></button>
+          <h2 id="finishTitle">Photo-finish<small id="pfSub"></small></h2>
+          <button id="pfNext" class="back fwd" type="button" aria-label="Next crossing"><svg aria-hidden="true"><use href="#i-back"/></svg></button>
+        </header>
+        <div class="sheet-body tight">
+          <p id="pfEmpty" class="sheet-intro" hidden></p>
+          <div id="pfStage" class="pf-stage"><canvas id="pfCanvas" aria-label="Photo-finish picture: time runs across, the finish line runs down"></canvas></div>
+          <p id="pfRead" class="pf-read" role="status"></p>
+          <div id="pfTools" class="pf-tools">
+            <button id="pfZoomOut" class="btn ghost" type="button" aria-label="Zoom out">−</button>
+            <button id="pfZoomIn" class="btn ghost" type="button" aria-label="Zoom in">+</button>
+            <button id="pfFit" class="btn ghost" type="button">Fit</button>
+            <button id="pfFlip" class="btn ghost" type="button" aria-pressed="false">Flip</button>
+          </div>
+          <p id="pfNote" class="note"></p>
+        </div>
+        <footer class="sheet-foot"><button class="btn main primary full" value="close">Done</button></footer>
+      </form>
+    </dialog>
+
     <dialog id="sessions" class="sheet" aria-labelledby="sessionsTitle">
       <form method="dialog" class="sheet-form">
         <div class="grab"></div>
@@ -311,6 +346,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=23"></script>
+  <script type="module" src="js/app.js?v=24"></script>
 </body>
 </html>
