@@ -78,6 +78,43 @@ let finishPending = [];      // crossings still collecting the frames after them
 let timeSource = null;
 let wakeLock = null;
 let fpsFrames = 0, fpsSince = performance.now();
+// Where frames go missing: the camera's own clock (captureTime steps), the
+// video frames the browser presents (presentedFrames), the screen's refresh
+// (requestAnimationFrame) and the frames the app gets (fps pill).
+const rates = { app: 0, presented: 0, capture: 0, screen: 0 };
+let presentedAt = null, captureGaps = [], lastCapture = 0, rafCount = 0, rafSince = performance.now();
+(function countRaf(t) {
+  rafCount++;
+  if (t - rafSince > 1000) { rates.screen = Math.round((rafCount * 1000) / (t - rafSince)); rafCount = 0; rafSince = t; }
+  requestAnimationFrame(countRaf);
+})(performance.now());
+function noteFrameMeta(now, meta) {
+  if (!meta) return;
+  if (typeof meta.captureTime === 'number' && meta.captureTime > 0) {
+    if (lastCapture && meta.captureTime > lastCapture) captureGaps.push(meta.captureTime - lastCapture);
+    lastCapture = meta.captureTime;
+  }
+  if (typeof meta.presentedFrames === 'number') {
+    if (!presentedAt) presentedAt = { n: meta.presentedFrames, t: now };
+    else if (now - presentedAt.t > 1000) {
+      rates.presented = Math.round(((meta.presentedFrames - presentedAt.n) * 1000) / (now - presentedAt.t));
+      presentedAt = { n: meta.presentedFrames, t: now };
+      if (captureGaps.length > 3) {
+        const g = captureGaps.sort((a, b) => a - b)[captureGaps.length >> 1];
+        rates.capture = Math.round(1000 / g);
+      }
+      captureGaps = [];
+    }
+  }
+}
+function ratesText() {
+  const parts = [];
+  if (rates.capture) parts.push(`camera ${rates.capture}/s`);
+  if (rates.presented) parts.push(`video frames shown ${rates.presented}/s`);
+  if (rates.screen) parts.push(`screen ${rates.screen} Hz`);
+  parts.push(`app ${rates.app}/s`);
+  return `${parts.join(', ')}.`;
+}
 let recorder = null;         // SessionRecorder while "Record + time" is running
 let micTrack = null;
 let lastFrameT = 0;          // detection clock of the newest frame
@@ -422,13 +459,18 @@ function frameTime(now, meta) {
 function onFrame(now, meta) {
   if (!stream) return;
   fpsFrames++;
+  noteFrameMeta(now, meta);
   if (now - fpsSince > 1000) {
     const fps = Math.round((fpsFrames * 1000) / (now - fpsSince));
-    els.fps.textContent = resting ? `${fps} fps · rest` : `${fps} fps${glSampler && !readTimes ? ' · gpu' : ''}`;
+    rates.app = fps;
+    // "29/60 fps": the app got 29 of the 60 frames the video showed.
+    const of = rates.presented > fps + 3 ? `/${rates.presented}` : '';
+    els.fps.textContent = resting ? `${fps}${of} fps · rest` : `${fps}${of} fps${glSampler && !readTimes ? ' · gpu' : ''}`;
+    if ($('settings').open) $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
     fpsFrames = 0; fpsSince = now;
     if (recorder) {
       recorder.log('second', {
-        fps, detFrames: sec.frames, track: +sec.track.toFixed(3), apron: +sec.apron.toFixed(3),
+        fps, cam: rates.capture || undefined, shown: rates.presented || undefined, screen: rates.screen || undefined, detFrames: sec.frames, track: +sec.track.toFixed(3), apron: +sec.apron.toFixed(3),
         learning: !!detector?.learning, ...(resting ? { resting: true } : {}),
       });
       sec = { frames: 0, track: 0, apron: 0 };
@@ -1112,7 +1154,7 @@ function fillSettings() {
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
-  $('camInfo').textContent = describeCamera();
+  $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -1252,7 +1294,7 @@ els.sayGap.addEventListener('change', () => { settings.sayGap = els.sayGap.check
 els.fps60.addEventListener('change', async () => {
   settings.fps60 = els.fps60.checked; save();
   if (stream && !isActive()) await setCameraFps(wantedFps());
-  $('camInfo').textContent = describeCamera();
+  $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 });
 els.countSingles.addEventListener('change', () => {
   settings.countSingles = els.countSingles.checked;
