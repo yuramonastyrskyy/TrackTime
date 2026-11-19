@@ -236,11 +236,16 @@ export class DirectLink {
     if (!m || m.v !== 1) return;
     if (m.type !== 'answer' || m.to !== this.dev || m.sid !== this.sid || typeof m.sdp !== 'string') return;
     const pc = this.pc;
-    if (!pc || pc.signalingState !== 'have-local-offer') return; // a copy from the other broker
+    // Each broker delivers its own copy of the answer, often in the same
+    // moment: take the first one only, before any await.
+    if (!pc || this.answeredSid === m.sid || pc.signalingState !== 'have-local-offer') return;
+    this.answeredSid = m.sid;
     try {
       await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
       this.note(`stopwatch answered (stopwatch: ${describeCandidates(m.sdp)})`);
-    } catch { if (this.pc === pc) { this.note('bad answer from the stopwatch'); this.close(); } }
+    } catch {
+      if (this.pc === pc && pc.signalingState !== 'stable') { this.note('bad answer from the stopwatch'); this.close(); }
+    }
   }
 
   send(text) {
