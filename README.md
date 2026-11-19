@@ -82,3 +82,12 @@ npm test                                   # lap logic, sampling, plans and sess
 CLIPS_DIR=path/to/video_footage npm test   # also replays trimmed_01..03.mp4 (needs ffmpeg)
 node test/run-clip.mjs clip.mp4            # print what the app would announce for a video
 ```
+
+## Preview of a pull request
+
+GitHub Pages is published by `.github/workflows/pages.yml` (Settings › Pages › Source must be **GitHub Actions**):
+
+- `https://yuramonastyrskyy.github.io/TrackTime/`: the live app, from `main`.
+- `https://yuramonastyrskyy.github.io/TrackTime/preview/`: the newest open pull request, rebuilt on every push to a branch. It shows a yellow **PREVIEW · PR #N** badge and keeps its own settings, sessions, recordings and offline cache, so trying it never touches the live app's data. With no open pull request it says so.
+
+`scripts/build-pages.sh` builds the site; run it locally to check a preview build.
