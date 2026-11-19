@@ -303,11 +303,8 @@ async function startCamera() {
     return;
   }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: cameraConstraints(wantedFps()) });
-    // Some phones only give 60 fps at a small size. The detector needs the
-    // detail more than the frame rate, so then go back to 720p at 30.
-    const cam = safe(() => stream.getVideoTracks()[0].getSettings());
-    if (wantedFps() > 30 && cam && Math.min(cam.width || 720, cam.height || 720) < 700) await setCameraFps(30);
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: cameraConstraints(30) });
+    if (wantedFps() > 30) await setCameraFps(60);
   } catch (err) {
     if (err && err.name === 'NotAllowedError') {
       showCameraError('Camera access was blocked', 'Allow the camera for this app in the phone settings, then try again.');
@@ -343,15 +340,58 @@ function cameraConstraints(fps) {
     frameRate: fps > 30 ? { ideal: fps } : { ideal: 30, max: 30 },
   };
 }
-/** Asks the running camera for a new frame rate; keeps going on refusal. */
+/** What the camera gives now and what it says it can do, for Settings and the log. */
+let cameraNote = '';
+function describeCamera() {
+  const vt = stream?.getVideoTracks()[0];
+  if (!vt) return 'Camera off.';
+  const st = safe(() => vt.getSettings()) || {};
+  const caps = safe(() => vt.getCapabilities?.()) || {};
+  const max = caps.frameRate?.max;
+  const now = st.frameRate ? `${Math.round(st.frameRate)} fps` : 'fps unknown';
+  return `Camera now: ${st.width || '?'}×${st.height || '?'} at ${now}`
+    + `${max ? `; it says up to ${Math.round(max)} fps` : ''}.${cameraNote ? ` ${cameraNote}` : ''}`;
+}
+/**
+ * Asks the running camera for 30 or 60 fps. For 60 it tries 720p, then
+ * insists (min 50 fps) at 720p and at 1080p, because some phones only offer
+ * 60 fps at one size. A result smaller than 720p goes back to 720p at 30: the
+ * detector needs the detail more than the frame rate.
+ */
 async function setCameraFps(fps) {
   const vt = stream?.getVideoTracks()[0];
   if (!vt) return;
-  const now = safe(() => vt.getSettings().frameRate);
-  if (now && (fps > 30 ? now > 31 : now <= 31)) return;
-  try { await vt.applyConstraints(cameraConstraints(fps)); } catch (e) {
-    recorder?.log('detector', { detail: `camera ${fps} fps refused (${e?.name || e})` });
+  const fr = () => safe(() => vt.getSettings().frameRate) || 0;
+  const short = () => { const st = safe(() => vt.getSettings()) || {}; return Math.min(st.width || 720, st.height || 720); };
+  const apply = async (c) => { try { await vt.applyConstraints(c); return true; } catch (e) { return e?.name || 'refused'; } };
+  const base = { facingMode: { ideal: 'environment' } };
+  if (fps <= 30) {
+    if (fr() && fr() <= 31) return;
+    await apply(cameraConstraints(30));
+    return;
   }
+  if (fr() > 31) return;
+  const tries = [
+    cameraConstraints(60),
+    { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { min: 50, ideal: 60 } },
+    { ...base, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { min: 50, ideal: 60 } },
+  ];
+  const notes = [];
+  for (const c of tries) {
+    const r = await apply(c);
+    if (r !== true) { notes.push(r); continue; }
+    if (fr() > 31) break;
+  }
+  if (fr() > 31 && short() < 700) {
+    cameraNote = `60 fps only came at ${short()}p, so it went back to 720p at 30.`;
+    await apply(cameraConstraints(30));
+  } else if (fr() <= 31) {
+    cameraNote = `60 fps was not given${notes.length ? ` (${[...new Set(notes)].join(', ')})` : ''}.`;
+    await apply(cameraConstraints(30));
+  } else {
+    cameraNote = '';
+  }
+  recorder?.log('detector', { detail: describeCamera() });
 }
 function showCameraError(title, msg) {
   els.cameraErrorTitle.textContent = title;
@@ -1072,6 +1112,7 @@ function fillSettings() {
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
+  $('camInfo').textContent = describeCamera();
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -1208,9 +1249,10 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 els.recordSound.addEventListener('change', () => { settings.recordSound = els.recordSound.checked; save(); });
 els.restBetweenLaps.addEventListener('change', () => { settings.restBetweenLaps = els.restBetweenLaps.checked; save(); });
 els.sayGap.addEventListener('change', () => { settings.sayGap = els.sayGap.checked; save(); });
-els.fps60.addEventListener('change', () => {
+els.fps60.addEventListener('change', async () => {
   settings.fps60 = els.fps60.checked; save();
-  if (stream && !isActive()) setCameraFps(wantedFps());
+  if (stream && !isActive()) await setCameraFps(wantedFps());
+  $('camInfo').textContent = describeCamera();
 });
 els.countSingles.addEventListener('change', () => {
   settings.countSingles = els.countSingles.checked;
