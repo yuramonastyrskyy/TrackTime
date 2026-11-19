@@ -90,7 +90,7 @@ function renderLink(s) {
   const up = s.links.filter((l) => l.status === 'open').length;
   let text = s.connected ? `Connected (${up} of ${s.links.length} relays).` : 'Connecting…';
   if (s.direct === 'open') text += ' Direct ✓ (works without internet).';
-  else if (s.direct) text += ' Direct: setting up…';
+  else if (s.direct) text += ` Direct: setting up…${s.directDetail ? ` (${s.directDetail})` : ''}`;
   if (s.pending) text += ` Waiting to send: ${s.pending}.`;
   if (s.lastSent) {
     const when = new Date(s.lastSent.at).toLocaleTimeString();
