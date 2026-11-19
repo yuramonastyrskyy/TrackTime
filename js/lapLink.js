@@ -218,14 +218,14 @@ export class DirectLink {
       };
       pc.onconnectionstatechange = () => {
         if (this.pc !== pc) return;
-        if (pc.connectionState === 'failed') { this.note('phone and laptop cannot reach each other on this network'); this.close(); }
+        if (pc.connectionState === 'failed') { this.note('this device and the stopwatch cannot reach each other on this network'); this.close(); }
         else if (pc.connectionState === 'closed') this.close();
       };
       await pc.setLocalDescription(await pc.createOffer());
       await gathered(pc, this.gatherMs);
       if (this.pc !== pc) return;
       this.signal({ v: 1, type: 'offer', dev: this.dev, sid, sdp: pc.localDescription.sdp });
-      this.note(`waiting for the laptop (phone: ${describeCandidates(pc.localDescription.sdp)})`);
+      this.note(`waiting for the stopwatch (this device: ${describeCandidates(pc.localDescription.sdp)})`);
     } catch {
       if (this.pc === pc) this.close();
     }
@@ -236,11 +236,16 @@ export class DirectLink {
     if (!m || m.v !== 1) return;
     if (m.type !== 'answer' || m.to !== this.dev || m.sid !== this.sid || typeof m.sdp !== 'string') return;
     const pc = this.pc;
-    if (!pc || pc.signalingState !== 'have-local-offer') return; // a copy from the other broker
+    // Each broker delivers its own copy of the answer, often in the same
+    // moment: take the first one only, before any await.
+    if (!pc || this.answeredSid === m.sid || pc.signalingState !== 'have-local-offer') return;
+    this.answeredSid = m.sid;
     try {
       await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
-      this.note(`laptop answered (laptop: ${describeCandidates(m.sdp)})`);
-    } catch { if (this.pc === pc) { this.note('bad answer from the laptop'); this.close(); } }
+      this.note(`stopwatch answered (stopwatch: ${describeCandidates(m.sdp)})`);
+    } catch {
+      if (this.pc === pc && pc.signalingState !== 'stable') { this.note('bad answer from the stopwatch'); this.close(); }
+    }
   }
 
   send(text) {

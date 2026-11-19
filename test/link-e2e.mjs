@@ -11,14 +11,14 @@
 import { WebSocketServer } from 'ws';
 import { chromium } from 'playwright';
 
-const BROKER_PORT = 18830;
+const BROKER_PORT = 18830; // and BROKER_PORT + 1: two brokers, like the real setup
 const TT = process.env.TT_URL || 'http://localhost:8081';
 const SW = process.env.SW_URL || 'http://localhost:5173';
 const CODE = 'TEST42';
 const mode = process.argv[2] || 'direct'; // direct | late | blackhole
 
 // ---------- tiny MQTT 3.1.1 broker over WebSocket ----------
-let wss = null;
+let servers = [];
 let blackhole = false;
 const subs = new Map(); // ws -> Set(topic)
 function frame(type, body) {
@@ -27,8 +27,13 @@ function frame(type, body) {
   return Buffer.from([type, ...len, ...body]);
 }
 function startBroker() {
-  wss = new WebSocketServer({ port: BROKER_PORT, handleProtocols: () => 'mqtt' });
+  servers = [BROKER_PORT, BROKER_PORT + 1].map((port) => serve(new WebSocketServer({ port, handleProtocols: () => 'mqtt' })));
+}
+function serve(wss) {
+  // Each broker fans out to its own clients only.
+  const mine = new Set();
   wss.on('connection', (ws) => {
+    mine.add(ws);
     subs.set(ws, new Set());
     let buf = Buffer.alloc(0);
     ws.on('message', (data) => {
@@ -49,16 +54,16 @@ function startBroker() {
         else if (type === 3) {
           const tl = (body[0] << 8) | body[1];
           const topic = body.subarray(2, 2 + tl).toString();
-          for (const [c, t] of subs) if (t.has(topic) && c.readyState === 1) c.send(frame(0x30, [...body]));
+          for (const [c, t] of subs) if (mine.has(c) && t.has(topic) && c.readyState === 1) c.send(frame(0x30, [...body]));
         }
       }
     });
-    ws.on('close', () => subs.delete(ws));
+    ws.on('close', () => { subs.delete(ws); mine.delete(ws); });
   });
+  return wss;
 }
 function stopBroker() {
-  for (const c of wss.clients) c.terminate();
-  wss.close();
+  for (const wss of servers) { for (const c of wss.clients) c.terminate(); wss.close(); }
   subs.clear();
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -69,7 +74,7 @@ async function until(fn, ms, what) {
 
 startBroker();
 const browser = await chromium.launch({ args: ['--disable-features=WebRtcHideLocalIpsWithMdns'] });
-const q = `?relay=ws://localhost:${BROKER_PORT}/mqtt&ntfy=off${mode === 'direct' ? '' : '&direct=off'}`;
+const q = `?relay=ws://localhost:${BROKER_PORT}/mqtt,ws://localhost:${BROKER_PORT + 1}/mqtt&ntfy=off${mode === 'direct' ? '' : '&direct=off'}`;
 
 // Stopwatch (laptop)
 const sw = await (await browser.newContext()).newPage();
@@ -130,7 +135,7 @@ if (mode === 'direct') {
   await sleep(mode === 'blackhole' ? 3000 : 18000);
   if (mode === 'blackhole') {
     // the dead sockets are noticed by keep-alive; speed up by dropping them
-    for (const c of wss.clients) c.terminate();
+    for (const wss of servers) for (const c of wss.clients) c.terminate();
     blackhole = false;
   } else startBroker();
   try { await until(async () => (await laps()).length >= 2, 40000, 'late laps'); }
