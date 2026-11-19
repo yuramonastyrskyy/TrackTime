@@ -1,7 +1,7 @@
 // Offline cache: the app works at the velodrome without internet after one visit.
 // Only this app's own old caches are deleted: the preview copy under /preview/
 // shares the site and keeps its caches under 'tracktime-preview-v…'.
-const VERSION = 'tracktime-v15';
+const VERSION = 'tracktime-v16';
 const CLIPS = [...Array(100).keys()].map((n) => `audio/en/${n}.m4a`).concat(['point', 'minute', 'start', 'plus', 'minus', 'nextblock'].map((w) => `audio/en/${w}.m4a`));
 const SHELL = ['./', 'index.html', 'styles.css', 'js/app.js', 'js/detector.js', 'js/speech.js', 'js/recorder.js', 'js/glsampler.js', 'js/lapLink.js', 'js/plan.js', 'js/session.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...CLIPS];
 

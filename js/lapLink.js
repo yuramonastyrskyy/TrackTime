@@ -189,12 +189,21 @@ export class DirectLink {
     this.sid = '';
     this.offeredAt = 0;
     this.detail = '';       // why it is not up yet, for the status line
+    this.mine = '';         // this device's local addresses in the last offer
+    this.theirs = '';       // the stopwatch's, from its answer
   }
 
   static get supported() { return typeof RTCPeerConnection === 'function'; }
 
   set(s) { if (this.status !== s) { this.status = s; this.onStatus?.(s); } }
-  note(d) { if (this.detail !== d) { this.detail = d; this.onStatus?.(this.status); } }
+  /** Status line: the current step plus both sides' local addresses. */
+  note(step) {
+    const parts = [step];
+    if (this.mine) parts.push(`this device: ${this.mine}`);
+    if (this.theirs) parts.push(`stopwatch: ${this.theirs}`);
+    const d = parts.join(' · ');
+    if (this.detail !== d) { this.detail = d; this.onStatus?.(this.status); }
+  }
 
   /** Starts a fresh offer unless the link is up or an offer is only just out. */
   async offer() {
@@ -225,7 +234,9 @@ export class DirectLink {
       await gathered(pc, this.gatherMs);
       if (this.pc !== pc) return;
       this.signal({ v: 1, type: 'offer', dev: this.dev, sid, sdp: pc.localDescription.sdp });
-      this.note(`waiting for the stopwatch (this device: ${describeCandidates(pc.localDescription.sdp)})`);
+      this.mine = describeCandidates(pc.localDescription.sdp);
+      this.theirs = '';
+      this.note('waiting for the stopwatch');
     } catch {
       if (this.pc === pc) this.close();
     }
@@ -242,7 +253,8 @@ export class DirectLink {
     this.answeredSid = m.sid;
     try {
       await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
-      this.note(`stopwatch answered (stopwatch: ${describeCandidates(m.sdp)})`);
+      this.theirs = describeCandidates(m.sdp);
+      this.note('stopwatch answered');
     } catch {
       if (this.pc === pc && pc.signalingState !== 'stable') { this.note('bad answer from the stopwatch'); this.close(); }
     }
