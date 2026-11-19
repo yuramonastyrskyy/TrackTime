@@ -188,11 +188,13 @@ export class DirectLink {
     this.dc = null;
     this.sid = '';
     this.offeredAt = 0;
+    this.detail = '';       // why it is not up yet, for the status line
   }
 
   static get supported() { return typeof RTCPeerConnection === 'function'; }
 
   set(s) { if (this.status !== s) { this.status = s; this.onStatus?.(s); } }
+  note(d) { if (this.detail !== d) { this.detail = d; this.onStatus?.(this.status); } }
 
   /** Starts a fresh offer unless the link is up or an offer is only just out. */
   async offer() {
@@ -209,15 +211,21 @@ export class DirectLink {
       this.pc = pc;
       const dc = pc.createDataChannel('laps', { ordered: true });
       this.dc = dc;
-      dc.onopen = () => { if (this.dc === dc) this.set('open'); };
-      dc.onclose = () => { if (this.dc === dc) { this.close(); } };
+      dc.onopen = () => { if (this.dc === dc) { this.detail = ''; this.set('open'); } };
+      dc.onclose = () => { if (this.dc === dc) { this.note('link closed'); this.close(); } };
+      pc.oniceconnectionstatechange = () => {
+        if (this.pc === pc && this.status !== 'open') this.note(`network check: ${pc.iceConnectionState}`);
+      };
       pc.onconnectionstatechange = () => {
-        if (this.pc === pc && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) this.close();
+        if (this.pc !== pc) return;
+        if (pc.connectionState === 'failed') { this.note('phone and laptop cannot reach each other on this network'); this.close(); }
+        else if (pc.connectionState === 'closed') this.close();
       };
       await pc.setLocalDescription(await pc.createOffer());
       await gathered(pc, this.gatherMs);
       if (this.pc !== pc) return;
       this.signal({ v: 1, type: 'offer', dev: this.dev, sid, sdp: pc.localDescription.sdp });
+      this.note(`waiting for the laptop (phone: ${describeCandidates(pc.localDescription.sdp)})`);
     } catch {
       if (this.pc === pc) this.close();
     }
@@ -229,7 +237,10 @@ export class DirectLink {
     if (m.type !== 'answer' || m.to !== this.dev || m.sid !== this.sid || typeof m.sdp !== 'string') return;
     const pc = this.pc;
     if (!pc || pc.signalingState !== 'have-local-offer') return; // a copy from the other broker
-    try { await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp }); } catch { if (this.pc === pc) this.close(); }
+    try {
+      await pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
+      this.note(`laptop answered (laptop: ${describeCandidates(m.sdp)})`);
+    } catch { if (this.pc === pc) { this.note('bad answer from the laptop'); this.close(); } }
   }
 
   send(text) {
@@ -245,6 +256,21 @@ export class DirectLink {
     try { pc?.close(); } catch { /* ignore */ }
     this.set('closed');
   }
+}
+
+/** Short summary of an SDP's ICE candidates: local IPs, hidden (.local) names, or none. */
+export function describeCandidates(sdp) {
+  const ips = new Set();
+  let hidden = 0;
+  for (const line of String(sdp).split(/\r?\n/)) {
+    const m = /^a=candidate:\S+ \d+ udp \d+ (\S+) \d+ typ host/i.exec(line);
+    if (!m) continue;
+    if (m[1].endsWith('.local')) hidden++;
+    else ips.add(m[1]);
+  }
+  const parts = [...ips];
+  if (hidden) parts.push(`${hidden} hidden address${hidden > 1 ? 'es' : ''}`);
+  return parts.length ? parts.join(', ') : 'no local address';
 }
 
 /** Waits until ICE gathering is complete (or `ms` passes), so one message carries all candidates. */
@@ -427,6 +453,7 @@ export class LapSender {
       code: this.code,
       links,
       direct: this.direct ? this.direct.status : null,
+      directDetail: this.direct?.detail || '',
       connected: this.connected,
       pending: this.pendingCount(),
       lastSent: this.lastSent,
