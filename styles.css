@@ -519,5 +519,34 @@ html.native-cam .tt video { display: none; }
 .tt .chip.pf::after { content: ""; position: absolute; top: 7px; left: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--tt-amber); }
 .tt .lastlap:not(.empty) { cursor: pointer; }
 
+/* ---------- riders (app): summary leaders + review sheet ---------- */
+.tt .sum-riders { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.tt .leaders { display: flex; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; }
+.tt .leaders img { height: 44px; border-radius: 6px; border: 2px solid transparent; }
+.tt .leaders img.unsure { border-color: var(--tt-amber); }
+.tt .roster { display: flex; flex-wrap: wrap; gap: 10px; }
+.tt .rider { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 84px; background: none; border: 0; padding: 0; color: var(--tt-text); font: inherit; }
+.tt .rider img, .tt .rider .noimg { height: 84px; max-width: 84px; object-fit: cover; border-radius: 8px; background: var(--tt-surface-2); }
+.tt .rider .noimg { width: 56px; }
+.tt .rider input { width: 84px; font: 600 14px var(--tt-font); color: var(--tt-text); background: var(--tt-surface-1); border: 1px solid var(--tt-border); border-radius: 6px; padding: 4px 6px; text-align: center; }
+.tt .rider small { font-size: 12px; color: var(--tt-text-2); }
+.tt .rider-laps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tt .rider-lap { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--tt-border); }
+.tt .rider-lap .k { font-size: 14px; color: var(--tt-text-2); font-variant-numeric: tabular-nums; }
+.tt .rider-lap .k b { display: block; color: var(--tt-text); font-size: 16px; }
+.tt .rider-lap .row-x { display: flex; gap: 6px; overflow-x: auto; }
+.tt .xing { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; background: none; border: 2px solid transparent; border-radius: 8px; padding: 2px; color: var(--tt-text); font: 12px var(--tt-font); max-width: 76px; }
+.tt .xing img { height: 64px; border-radius: 6px; }
+.tt .xing span { max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt .xing.lead { border-color: var(--tt-good); }
+.tt .xing.unsure { border-color: var(--tt-amber); border-style: dashed; }
+.tt .xing.unsure::after { content: "?"; position: absolute; top: 2px; right: 4px; background: var(--tt-amber); color: var(--tt-on-light); font-weight: 800; border-radius: 50%; width: 18px; height: 18px; line-height: 18px; text-align: center; }
+.tt .xing.ignored { opacity: .4; }
+.tt .xing.picking { border-color: var(--tt-blue); border-style: solid; }
+.tt .rider-pick { position: sticky; bottom: 0; background: var(--tt-surface-1); border: 1px solid var(--tt-border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.tt .pick-title { margin: 0; font-weight: 700; }
+.tt .pick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tt .roster.pick .rider { cursor: pointer; }
+
 /* ---------- UI size (see --tt-ui-scale) ---------- */
 .tt .intro, .tt .hud, .tt .toast, .tt .panel, .tt dialog.sheet { zoom: var(--tt-ui-scale); }

@@ -13,7 +13,9 @@ import {
   newSession, sessionStart, sessionLap, sessionUndo,
 } from './session.js';
 import { initLists, openRecordings, resetSendBtn, formatDuration } from './lists.js';
-import { nativeApi, NativeCamera, exposureText, openInAppLink } from './nativeCamera.js';
+import { nativeApi, NativeCamera, exposureText, openInAppLink, RIDERS_MIN } from './nativeCamera.js';
+import { RiderRun, RiderBook, bookFromJSON, bookToJSON } from './riders.js';
+import { RidersView } from './ridersView.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -42,6 +44,7 @@ const els = {
   toastText: $('toastText'), toastIcon: $('toastIcon'), startLabel: $('startLabel'), startIcon: $('startIcon'),
   sendLabel: $('sendLabel'), sendIcon: $('sendIcon'), sumTitle: $('sumTitle'), cameraBtnLabel: $('cameraBtnLabel'),
   sessionsSub: $('sessionsSub'), recordingsSub: $('recordingsSub'),
+  riders: $('riders'), ridersGroup: $('ridersGroup'), ridersOn: $('ridersOn'), ridersKnown: $('ridersKnown'), ridersForget: $('ridersForget'),
   openAppBtn: $('openAppBtn'), nativeGroup: $('nativeGroup'), camRate: $('camRate'), camExposure: $('camExposure'),
   expDarker: $('expDarker'), expBrighter: $('expBrighter'),
   recStorage: $('recStorage'), recStorageText: $('recStorageText'), recStorageFill: $('recStorageFill'),
@@ -515,6 +518,7 @@ function onNativeTick(now) {
       if (detector) { try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ } }
     }
     if (camStats && i.fps && !resting) camStats.minFps = Math.min(camStats.minFps, i.fps);
+    if (riderRun && session) pollRiders(lastFrameT);
     els.fps.textContent = `${i.fps || 0} fps · app${resting ? ' · rest' : ''}`;
     if (els.settings.open) fillCamera(i);
   }
@@ -734,6 +738,7 @@ function startTiming() {
     ncam.lock();
     const i = ncam.info();
     camStats = { minFps: Infinity, dropped0: i.dropped || 0 };
+    startRiders(i);
   }
   setState('learning');
   requestWakeLock();
@@ -745,6 +750,7 @@ function stopTiming() {
   detector = null;
   if (ncam) ncam.unlock();
   finishSession();
+  stopRiders();
   releaseWakeLock();
   if (recorder) stopRecording();
   renderSummary();
@@ -776,6 +782,7 @@ function renderSummary() {
     i.className = `h${b.h}${b.band ? ` b-${b.band}` : ''}`;
     return i;
   }));
+  ridersView.renderSummary(riderWaiting ? 'Looking at the riders…' : null);
 }
 function setStat(el, value, unit) {
   el.textContent = value;
@@ -794,6 +801,10 @@ function onCrossing(t) {
   }
   if ((r.type === 'start' || r.type === 'lap') && stripBuf) {
     finishPending.push({ key: r.type === 'start' ? 0 : r.lap, at: t, ms: r.type === 'lap' ? r.ms : null, epoch: frameEpoch(t) });
+  }
+  if ((r.type === 'start' || r.type === 'lap') && riderRun) {
+    riderRun.addCrossing(r.type === 'start' ? 0 : r.lap, t);
+    ncam?.ridersLap(t);
   }
   if (r.type === 'start' || r.type === 'lap') {
     const at = frameEpoch(t);
@@ -962,6 +973,7 @@ els.undoBtn.addEventListener('click', () => {
   resetUndo();
   const undone = counter.undoLast();
   dropFinish(undone ? undone.lap : 0);
+  riderRun?.dropCrossing(undone ? undone.lap : 0);
   if (session) { sessionUndo(session); persistSession(); }
   if (plan) announcedBlock = currentProgress().index;
   renderPlan();
@@ -1257,6 +1269,7 @@ function fillSettings() {
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
+  fillRidersSettings();
   $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 }
 els.settingsBtn.addEventListener('click', () => {
@@ -1415,6 +1428,95 @@ function nudgeExposure(d) {
 }
 els.expDarker.addEventListener('click', () => nudgeExposure(-1));
 els.expBrighter.addEventListener('click', () => nudgeExposure(1));
+
+// ---------- riders (app) ----------
+// The app describes the riders near the line around each counted crossing
+// (TrackCameraPlugin); js/riders.js decides who is who. Nothing is said or
+// asked during timing: after Stop the summary shows each lap's leader and the
+// review sheet takes corrections before Send to Pacemaker. The riders (their
+// colours and names) are kept for the next session.
+const RIDERS_KEY = 'tracktime.riders.v1';
+let riderBook = loadRiderBook();
+let riderRun = null;        // this session's (or, after Stop, the last session's) rider matching
+let riderWaiting = false;   // after Stop, until the app has described the last frames
+let riderWaitTimer = null;
+const ridersAvailable = () => !!native && (() => { try { return native.version() >= RIDERS_MIN; } catch { return false; } })();
+
+function loadRiderBook() {
+  try { return bookFromJSON(JSON.parse(localStorage.getItem(RIDERS_KEY))); } catch { return new RiderBook(); }
+}
+function saveRiderBook() {
+  try { localStorage.setItem(RIDERS_KEY, JSON.stringify(bookToJSON(riderBook))); } catch { /* full or private: kept for this run only */ }
+}
+
+function startRiders(info) {
+  clearTimeout(riderWaitTimer);
+  riderWaiting = false;
+  riderRun = null;
+  if (!ncam?.hasRiders || settings.riders === false) return;
+  // At 60 fps every other frame is enough (the models then see 30 a second).
+  const every = (info?.fpsTarget || 60) >= 50 ? 2 : 1;
+  if (ncam.ridersStart(settings.line, every)) {
+    riderRun = new RiderRun(settings.line, riderBook);
+    riderRun.sessionId = session?.id;
+  }
+}
+
+/** Frames the app has described: into their crossing windows; windows that are complete get matched. */
+function pollRiders(now) {
+  if (!riderRun || !ncam) return true;
+  const info = ncam.ridersInfo();             // first: idle now means every frame so far is in the pull below
+  riderRun.addFrames(ncam.ridersPull());
+  const idle = !info.queued && !info.working;
+  if (idle) riderRun.finishUpTo(now);
+  return idle;
+}
+
+function stopRiders() {
+  if (!riderRun || !ncam) return;
+  ncam.ridersStop();
+  const s = lastSession;
+  if (!s || s.id !== riderRun.sessionId) { riderRun = null; return; }
+  riderWaiting = true;
+  const started = Date.now();
+  const step = () => {
+    const idle = pollRiders(-Infinity);
+    if (!idle && Date.now() - started < 120000) { riderWaitTimer = setTimeout(step, 500); return; }
+    riderRun.finishAll();
+    riderWaiting = false;
+    attachRiders(s);
+    if (!els.summary.hidden) ridersView.renderSummary();
+    if (els.riders.open) ridersView.render();
+  };
+  step();
+}
+
+/** The last session's riders, from the run: into the session (saved) and the book (kept). */
+function attachRiders(s = lastSession) {
+  if (!riderRun || !s) return;
+  s.riders = riderRun.summary([0, ...s.laps.map((l) => l.lap)]);
+  persistSession(s);
+  saveRiderBook();
+}
+
+const ridersView = new RidersView({
+  get: () => ({ run: riderRun, session: lastSession, decimals: settings.decimals }),
+  changed: () => { attachRiders(); ridersView.renderSummary(); },
+});
+
+function fillRidersSettings() {
+  els.ridersGroup.hidden = !ridersAvailable();
+  els.ridersOn.checked = settings.riders !== false;
+  const n = riderBook.riders.length;
+  els.ridersKnown.textContent = n ? `${n} kept from earlier sessions: ${riderBook.riders.slice(0, 6).map((r) => r.name).join(', ')}${n > 6 ? '…' : ''}` : 'None yet';
+  els.ridersForget.disabled = !n;
+}
+els.ridersOn.addEventListener('change', () => { settings.riders = els.ridersOn.checked; save(); });
+els.ridersForget.addEventListener('click', () => {
+  riderBook = new RiderBook();
+  try { localStorage.removeItem(RIDERS_KEY); } catch { /* ignored */ }
+  fillRidersSettings();
+});
 
 // ---------- Telegram mini app ----------
 function setupTelegram() {

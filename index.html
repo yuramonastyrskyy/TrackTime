@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=30">
+  <link rel="stylesheet" href="styles.css?v=31">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -134,6 +134,10 @@
           <div class="stat"><div id="sumThirdK" class="k">On target</div><div id="sumThird" class="v"></div></div>
         </div>
         <div id="sumBars" class="bars" aria-hidden="true"></div>
+        <div id="sumRiders" class="sum-riders" hidden>
+          <div id="sumLeaders" class="leaders" aria-label="Lap leaders"></div>
+          <button id="ridersBtn" class="btn sm ghost" type="button"><span id="ridersBtnLabel">Check riders</span></button>
+        </div>
       </section>
 
       <section id="planStrip" class="plan" aria-label="Plan" hidden>
@@ -228,6 +232,20 @@
                   <button id="expDarker" type="button">Darker</button>
                   <button id="expBrighter" type="button">Brighter</button>
                 </span>
+              </div>
+            </div>
+          </section>
+
+          <section id="ridersGroup" class="group" aria-labelledby="gRiders" hidden>
+            <h3 id="gRiders" class="group-h">Riders (app)</h3>
+            <div class="card">
+              <label class="row">
+                <span class="lbl"><b>Recognise riders</b><small>Learns each rider's jersey, helmet and bike colours in the first lap and names who crossed first each lap. Check the guesses after Stop. No tags needed.</small></span>
+                <input id="ridersOn" class="sw" type="checkbox" checked>
+              </label>
+              <div class="row">
+                <span class="lbl"><b>Known riders</b><small id="ridersKnown">None yet</small></span>
+                <button id="ridersForget" class="btn sm ghost" type="button">Forget</button>
               </div>
             </div>
           </section>
@@ -330,6 +348,31 @@
       </form>
     </dialog>
 
+    <dialog id="riders" class="sheet" aria-labelledby="ridersTitle">
+      <form method="dialog" class="sheet-form">
+        <div class="grab"></div>
+        <header class="sheet-head">
+          <h2 id="ridersTitle">Riders<small id="ridersSub"></small></h2>
+        </header>
+        <div class="sheet-body tight">
+          <p id="ridersIntro" class="sheet-intro">Who crossed first at the end of each lap. Laps marked ? are a guess: tap the rider to fix it. Tap a name to change it.</p>
+          <div id="ridersWait" class="note" role="status" hidden></div>
+          <div id="riderRoster" class="roster" aria-label="Riders"></div>
+          <ol id="riderLaps" class="rider-laps" aria-label="Laps"></ol>
+          <div id="riderPick" class="rider-pick" hidden>
+            <p id="riderPickTitle" class="pick-title">Who is this?</p>
+            <div id="riderPickList" class="roster pick"></div>
+            <div class="pick-actions">
+              <button id="riderPickNew" class="btn sm ghost" type="button">New rider</button>
+              <button id="riderPickIgnore" class="btn sm ghost" type="button">Not a team rider</button>
+              <button id="riderPickCancel" class="btn sm ghost" type="button">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <footer class="sheet-foot"><button class="btn main primary full" value="close">Done</button></footer>
+      </form>
+    </dialog>
+
     <dialog id="sessions" class="sheet" aria-labelledby="sessionsTitle">
       <form method="dialog" class="sheet-form">
         <div class="grab"></div>
@@ -363,6 +406,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=30"></script>
+  <script type="module" src="js/app.js?v=31"></script>
 </body>
 </html>
