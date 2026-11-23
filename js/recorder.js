@@ -180,6 +180,11 @@ export class SessionRecorder {
   }
 
   setSetupImage(blob) { this.rec.setupJpeg = blob; this._scheduleSave(); }
+  /** Keeps a photo-finish picture with the recording (saved with the log). */
+  addFinish(name, blob) {
+    (this.rec.finishes ||= []).push({ name, blob });
+    this._scheduleSave();
+  }
 
   _startPart() {
     const n = ++this.partN;
@@ -310,6 +315,9 @@ export async function sessionFiles(rec, memChunks = null) {
   files.push(new File([json], `${rec.name}-log.json`, { type: 'application/json' }));
   files.push(new File([logToCsv(rec.log, rec.parts)], `${rec.name}-events.csv`, { type: 'text/csv' }));
   if (rec.setupJpeg) files.push(new File([rec.setupJpeg], `${rec.name}-setup.jpg`, { type: 'image/jpeg' }));
+  for (const f of rec.finishes || []) {
+    files.push(new File([f.blob], `${rec.name}-finish-${f.name}.jpg`, { type: 'image/jpeg' }));
+  }
   return files;
 }
 

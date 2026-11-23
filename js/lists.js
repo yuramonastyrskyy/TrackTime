@@ -130,8 +130,11 @@ function renderSession(rec, files) {
     const part = f.name.match(/part(\d+)/)?.[1];
     box.append(fileButton(`Save video${part ? ` part ${part}` : ''}`, formatBytes(f.size), [f]));
   }
-  const logs = files.filter((f) => !f.type.startsWith('video/'));
+  const isFinish = (f) => f.name.includes('-finish-');
+  const logs = files.filter((f) => !f.type.startsWith('video/') && !isFinish(f));
   if (logs.length) box.append(fileButton('Save log, events and setup photo', formatBytes(logs.reduce((n, f) => n + f.size, 0)), logs));
+  const pics = files.filter(isFinish);
+  if (pics.length) box.append(fileButton(`Save photo-finish pictures (${pics.length})`, formatBytes(pics.reduce((n, f) => n + f.size, 0)), pics));
   box.append(deleteButton('Delete this recording', async (del) => {
     del.disabled = true;
     try { await store.deleteSession(rec.id); box.remove(); } catch (e) { del.textContent = `Delete failed (${e?.message || e})`; del.disabled = false; }

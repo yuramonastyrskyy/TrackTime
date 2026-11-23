@@ -43,12 +43,20 @@ export function parseFrames(text) {
   return out;
 }
 
-/** Sample points of a buildSampler() result as the app wants them: "u,v,u,v" (0..1). */
-export function pointsText(sampler) {
-  const parts = new Array(sampler.sampleCount * 2);
+/**
+ * Points as the app wants them, "u,v,u,v" (0..1): the detector samples of a
+ * buildSampler() result, then (optionally) the photo-finish column of a
+ * buildStripLine() result (fractional pixel positions, rounded like the browser).
+ */
+export function pointsText(sampler, strip = null) {
+  const parts = [];
   for (let i = 0; i < sampler.sampleCount; i++) {
-    parts[i * 2] = ((sampler.xs[i] + 0.5) / sampler.width).toFixed(5);
-    parts[i * 2 + 1] = ((sampler.ys[i] + 0.5) / sampler.height).toFixed(5);
+    parts.push(((sampler.xs[i] + 0.5) / sampler.width).toFixed(5), ((sampler.ys[i] + 0.5) / sampler.height).toFixed(5));
+  }
+  if (strip) {
+    for (let i = 0; i < strip.count; i++) {
+      parts.push(((Math.round(strip.xs[i]) + 0.5) / sampler.width).toFixed(5), ((Math.round(strip.ys[i]) + 0.5) / sampler.height).toFixed(5));
+    }
   }
   return parts.join(',');
 }
@@ -110,8 +118,9 @@ export class NativeCamera {
 
   stop() { try { this.api.stop(); } catch { /* ignored */ } }
 
-  setSampler(sampler) {
-    this.n = this.api.setPoints(pointsText(sampler));
+  /** Detector samples plus the photo-finish column; frames then carry both. */
+  setSampler(sampler, strip = null) {
+    this.n = this.api.setPoints(pointsText(sampler, strip));
     return this.n;
   }
 

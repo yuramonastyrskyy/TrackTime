@@ -501,5 +501,23 @@ html.native-cam .tt video { display: none; }
 .tt .sheet-foot.stacked { display: flex; flex-direction: column; gap: 12px; }
 .tt .scard > .part, .tt .scard > .btn.danger { width: 100%; }
 
+/* ---------- photo-finish sheet ---------- */
+.tt dialog.sheet.finish { max-width: calc(900px / var(--tt-ui-scale)); }
+.tt .finish .sheet-head h2 { text-align: center; }
+.tt .finish .sheet-head h2 small { display: block; font-size: 15px; font-weight: 600; color: var(--tt-text-2); font-variant-numeric: tabular-nums; }
+.tt .finish .sheet-head .back { margin-left: 0; color: var(--tt-text); }
+.tt .finish .sheet-head .back:disabled { opacity: .3; }
+.tt .finish .sheet-head .fwd svg { transform: scaleX(-1); }
+.tt .pf-stage { margin: 0 calc(-1 * var(--tt-gutter-r)) 0 calc(-1 * var(--tt-gutter-l)); background: var(--tt-backdrop); }
+.tt .pf-stage canvas { display: block; width: 100%; height: max(300px, calc((100dvh - 340px) / var(--tt-ui-scale))); cursor: crosshair; }
+.tt .pf-read { margin: 0; font-size: 17px; font-variant-numeric: tabular-nums; color: var(--tt-text-2); min-height: 1.4em; }
+.tt .pf-read b { color: var(--tt-text); font-size: 20px; }
+.tt .pf-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.tt .pf-tools .btn { font-size: 20px; font-weight: 800; }
+.tt .pf-tools .btn[aria-pressed="true"] { background: var(--tt-text); color: var(--tt-on-light); }
+.tt .chip.pf { cursor: pointer; }
+.tt .chip.pf::after { content: ""; position: absolute; top: 7px; left: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--tt-amber); }
+.tt .lastlap:not(.empty) { cursor: pointer; }
+
 /* ---------- UI size (see --tt-ui-scale) ---------- */
 .tt .intro, .tt .hud, .tt .toast, .tt .panel, .tt dialog.sheet { zoom: var(--tt-ui-scale); }

@@ -3,7 +3,7 @@
 // shares the site and keeps its caches under 'tracktime-preview-v…'.
 const VERSION = 'tracktime-v20';
 const CLIPS = [...Array(100).keys()].map((n) => `audio/en/${n}.m4a`).concat(['point', 'minute', 'start', 'plus', 'minus', 'nextblock'].map((w) => `audio/en/${w}.m4a`));
-const SHELL = ['./', 'index.html', 'styles.css', 'js/app.js', 'js/detector.js', 'js/speech.js', 'js/recorder.js', 'js/glsampler.js', 'js/lapLink.js', 'js/plan.js', 'js/session.js', 'js/lists.js', 'js/nativeCamera.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...CLIPS];
+const SHELL = ['./', 'index.html', 'styles.css', 'js/app.js', 'js/detector.js', 'js/speech.js', 'js/recorder.js', 'js/glsampler.js', 'js/lapLink.js', 'js/plan.js', 'js/session.js', 'js/lists.js', 'js/photofinish.js', 'js/finishView.js', 'js/nativeCamera.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...CLIPS];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
