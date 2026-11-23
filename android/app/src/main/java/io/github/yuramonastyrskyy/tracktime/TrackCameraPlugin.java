@@ -47,10 +47,16 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import android.graphics.Bitmap;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -77,7 +83,7 @@ import java.util.concurrent.Executors;
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class TrackCameraPlugin extends Plugin {
 
-    static final int VERSION = 1;
+    static final int VERSION = 2; // 2: rider identification (riders*)
     static final int PERM_CODE = 7101;
     private static final int MAX_QUEUE = 180; // 3 s at 60 fps if the page stops pulling
 
@@ -406,6 +412,7 @@ public class TrackCameraPlugin extends Plugin {
                 int p = index[i];
                 out[i] = p < lim ? buf.get(p) : 0;
             }
+            if (ridersOn) riderFrame(image, rot, ts);
             synchronized (lock) {
                 if (lastTsNs != 0 && fpsRange != null) {
                     double frameNs = 1e9 / fpsRange.getUpper();
@@ -464,6 +471,239 @@ public class TrackCameraPlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         analysisExecutor.shutdown();
+        riderExecutor.shutdown();
+    }
+
+    // ---------- rider identification ----------
+    // While timing, frames with something on the finish line are turned into
+    // small RGB pictures (half size, display orientation). The last second of
+    // them is kept; when the page reports a lap (ridersLap), those from just
+    // before it and everything for the next 8 s go to RiderEngine on a worker
+    // thread, which describes the riders near the line. The page pulls the
+    // descriptions (ridersPull) and decides who is who (js/riders.js).
+
+    private static final int RIDER_GATE_POINTS = 48;
+    private static final int RIDER_GATE_DIFF = 30;      // luma change that counts
+    private static final float RIDER_GATE_SHARE = 0.04f;
+    private static final double RIDER_BEFORE_MS = 500, RIDER_AFTER_MS = 8000, RIDER_RECENT_MS = 1000;
+    private static final int RIDER_MAX_WORK = 150;      // ~100 MB at most; older frames are dropped
+
+    private static final class RiderFrame {
+        final byte[] rgb; final int w, h; final double t;
+        RiderFrame(byte[] rgb, int w, int h, double t) { this.rgb = rgb; this.w = w; this.h = h; this.t = t; }
+    }
+
+    private final ExecutorService riderExecutor = Executors.newSingleThreadExecutor();
+    private final Object riderLock = new Object();
+    private volatile boolean ridersOn = false;
+    private volatile RiderEngine riderEngine = null;
+    private volatile String riderError = null;
+    private float[] riderLine = { 0.5f, 0.15f, 0.5f, 0.8f };
+    private int riderEvery = 2;
+    private long riderFrameNo = 0;
+    private float[] gateBg = null;
+    private boolean riderBgWanted = false;
+    private double busySince = -1;
+    private long quietFrames = 0;
+    private final ArrayDeque<RiderFrame> riderRecent = new ArrayDeque<>();
+    private final ArrayDeque<RiderFrame> riderWork = new ArrayDeque<>();
+    private double riderKeepUntil = -1;
+    private final ArrayList<String> riderResults = new ArrayList<>();
+    private long riderBusyFrames = 0, riderDone = 0, riderDropped = 0, riderMs = 0;
+    private boolean riderWorking = false;
+    private byte[] yCopy = new byte[0], uCopy = new byte[0], vCopy = new byte[0];
+
+    /** Analysis thread: every riderEvery-th frame while rider identification is on. */
+    private void riderFrame(ImageProxy image, int rot, long tsNs) {
+        if (++riderFrameNo % riderEvery != 0) return;
+        try {
+            double t = tsNs / 1e6;
+            ImageProxy.PlaneProxy yp = image.getPlanes()[0];
+            ByteBuffer yb = yp.getBuffer();
+            int iw = image.getWidth(), ih = image.getHeight();
+            float[] luma = new float[RIDER_GATE_POINTS];
+            float[] l;
+            synchronized (riderLock) { l = riderLine; }
+            for (int i = 0; i < RIDER_GATE_POINTS; i++) {
+                float f = (i + 0.5f) / RIDER_GATE_POINTS;
+                float u = l[0] + (l[2] - l[0]) * f, v = l[1] + (l[3] - l[1]) * f;
+                int[] s = sensorPixel(u, v, iw, ih, rot);
+                int p = s[1] * yp.getRowStride() + s[0] * yp.getPixelStride();
+                luma[i] = p < yb.limit() ? (yb.get(p) & 255) : 0;
+            }
+            boolean wantBg;
+            synchronized (riderLock) { wantBg = riderBgWanted || gateBg == null; }
+            if (wantBg) {
+                // The empty track (Start timing): background for the gate and the colour mask.
+                int[] size = new int[2];
+                byte[] rgb = toRgbHalf(image, rot, size);
+                synchronized (riderLock) { gateBg = luma; riderBgWanted = false; busySince = -1; }
+                RiderEngine e = riderEngine;
+                if (e != null) riderExecutor.execute(() -> e.setBackground(rgb, size[0], size[1]));
+                return;
+            }
+            int hit = 0;
+            for (int i = 0; i < RIDER_GATE_POINTS; i++) if (Math.abs(luma[i] - gateBg[i]) > RIDER_GATE_DIFF) hit++;
+            boolean busy = hit >= RIDER_GATE_SHARE * RIDER_GATE_POINTS;
+            if (!busy) {
+                for (int i = 0; i < RIDER_GATE_POINTS; i++) gateBg[i] += 0.05f * (luma[i] - gateBg[i]);
+                busySince = -1;
+                // Now and then the empty track refreshes the colour background (light drifts).
+                if (++quietFrames % 120 == 0) {
+                    int[] size = new int[2];
+                    byte[] rgb = toRgbHalf(image, rot, size);
+                    RiderEngine e = riderEngine;
+                    if (e != null) riderExecutor.execute(() -> e.learnBackground(rgb, size[0], size[1], 0.2f));
+                }
+                return;
+            }
+            if (busySince < 0) busySince = t;
+            else if (t - busySince > 4000) { // "covered" for 4 s: the picture changed; relearn
+                synchronized (riderLock) { riderBgWanted = true; }
+                return;
+            }
+            riderBusyFrames++;
+            int[] size = new int[2];
+            RiderFrame f = new RiderFrame(toRgbHalf(image, rot, size), size[0], size[1], t);
+            synchronized (riderLock) {
+                if (t <= riderKeepUntil) queueRiderWork(f);
+                else {
+                    riderRecent.add(f);
+                    while (!riderRecent.isEmpty() && riderRecent.peekFirst().t < t - RIDER_RECENT_MS) riderRecent.pollFirst();
+                }
+            }
+        } catch (Exception e) {
+            riderError = "frame: " + e;
+        }
+    }
+
+    /** Display-normalised point to a sensor pixel (as in buildIndex). */
+    private static int[] sensorPixel(float u, float v, int iw, int ih, int rot) {
+        float sx, sy;
+        switch (rot) {
+            case 90: sx = v; sy = 1 - u; break;
+            case 180: sx = 1 - u; sy = 1 - v; break;
+            case 270: sx = 1 - v; sy = u; break;
+            default: sx = u; sy = v;
+        }
+        return new int[] { Math.max(0, Math.min(iw - 1, (int) (sx * iw))), Math.max(0, Math.min(ih - 1, (int) (sy * ih))) };
+    }
+
+    /** YUV frame to half-size RGB in display orientation (2x2 luma average, full-range BT.601). */
+    private byte[] toRgbHalf(ImageProxy image, int rot, int[] size) {
+        ImageProxy.PlaneProxy[] pl = image.getPlanes();
+        int iw = image.getWidth(), ih = image.getHeight();
+        yCopy = copyPlane(pl[0].getBuffer(), yCopy);
+        uCopy = copyPlane(pl[1].getBuffer(), uCopy);
+        vCopy = copyPlane(pl[2].getBuffer(), vCopy);
+        int ys = pl[0].getRowStride(), yps = pl[0].getPixelStride();
+        int us = pl[1].getRowStride(), ups = pl[1].getPixelStride(), vs = pl[2].getRowStride(), vps = pl[2].getPixelStride();
+        boolean turned = rot == 90 || rot == 270;
+        int W = turned ? ih : iw, H = turned ? iw : ih; // display size, full
+        int dw = W / 2, dh = H / 2;
+        byte[] out = new byte[dw * dh * 3];
+        int ylen = yCopy.length, ulen = uCopy.length, vlen = vCopy.length;
+        for (int dy = 0; dy < dh; dy++) {
+            for (int dx = 0; dx < dw; dx++) {
+                int X = dx * 2, Y = dy * 2; // display pixel (top-left of the 2x2)
+                int sx, sy;
+                switch (rot) {
+                    case 90: sx = Y; sy = ih - 2 - X; break;
+                    case 180: sx = iw - 2 - X; sy = ih - 2 - Y; break;
+                    case 270: sx = iw - 2 - Y; sy = X; break;
+                    default: sx = X; sy = Y;
+                }
+                sx = Math.max(0, Math.min(iw - 2, sx)); sy = Math.max(0, Math.min(ih - 2, sy));
+                int p = sy * ys + sx * yps;
+                int yv = 0;
+                if (p + ys + yps < ylen) yv = ((yCopy[p] & 255) + (yCopy[p + yps] & 255) + (yCopy[p + ys] & 255) + (yCopy[p + ys + yps] & 255)) >> 2;
+                int up = (sy >> 1) * us + (sx >> 1) * ups, vp = (sy >> 1) * vs + (sx >> 1) * vps;
+                int U = (up < ulen ? uCopy[up] & 255 : 128) - 128, V = (vp < vlen ? vCopy[vp] & 255 : 128) - 128;
+                int r = yv + Math.round(1.402f * V), g = yv - Math.round(0.344136f * U + 0.714136f * V), b = yv + Math.round(1.772f * U);
+                int o = (dy * dw + dx) * 3;
+                out[o] = (byte) (r < 0 ? 0 : (r > 255 ? 255 : r));
+                out[o + 1] = (byte) (g < 0 ? 0 : (g > 255 ? 255 : g));
+                out[o + 2] = (byte) (b < 0 ? 0 : (b > 255 ? 255 : b));
+            }
+        }
+        size[0] = dw; size[1] = dh;
+        return out;
+    }
+
+    private static byte[] copyPlane(ByteBuffer b, byte[] into) {
+        ByteBuffer d = b.duplicate();
+        d.position(0);
+        int n = d.remaining();
+        if (into.length < n) into = new byte[n];
+        d.get(into, 0, n);
+        return into;
+    }
+
+    /** Under riderLock. */
+    private void queueRiderWork(RiderFrame f) {
+        riderWork.add(f);
+        while (riderWork.size() > RIDER_MAX_WORK) { riderWork.pollFirst(); riderDropped++; }
+        if (!riderWorking) {
+            riderWorking = true;
+            riderExecutor.execute(this::drainRiderWork);
+        }
+    }
+
+    /** Worker thread: describes the queued frames one by one. */
+    private void drainRiderWork() {
+        while (true) {
+            RiderFrame f;
+            synchronized (riderLock) {
+                f = riderWork.pollFirst();
+                if (f == null) { riderWorking = false; return; }
+            }
+            RiderEngine e = riderEngine;
+            if (e == null) continue;
+            long t0 = SystemClock.elapsedRealtime();
+            try {
+                String r = e.process(f.rgb, f.w, f.h, f.t);
+                synchronized (riderLock) {
+                    if (r != null) riderResults.add(r);
+                    riderDone++;
+                    riderMs += SystemClock.elapsedRealtime() - t0;
+                    while (riderResults.size() > 400) riderResults.remove(0);
+                }
+            } catch (Throwable err) {
+                riderError = "process: " + err;
+            }
+        }
+    }
+
+    private void loadRiderEngine() {
+        if (riderEngine != null) return;
+        try {
+            byte[] det = readAsset("riders/yolox_tiny.onnx"), reid = readAsset("riders/osnet_x0_25.onnx");
+            riderEngine = new RiderEngine(det, reid, 2, TrackCameraPlugin::jpeg);
+            riderError = null;
+            synchronized (riderLock) { riderBgWanted = true; } // the next frame becomes its background
+        } catch (Throwable e) {
+            riderError = "load: " + e;
+        }
+    }
+
+    private byte[] readAsset(String name) throws Exception {
+        try (InputStream in = getContext().getAssets().open(name)) {
+            ByteArrayOutputStream o = new ByteArrayOutputStream(1 << 20);
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+            return o.toByteArray();
+        }
+    }
+
+    private static byte[] jpeg(byte[] rgb, int w, int h) {
+        int[] px = new int[w * h];
+        for (int i = 0; i < px.length; i++) px[i] = 0xff000000 | (rgb[i * 3] & 255) << 16 | (rgb[i * 3 + 1] & 255) << 8 | (rgb[i * 3 + 2] & 255);
+        Bitmap bm = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888);
+        ByteArrayOutputStream o = new ByteArrayOutputStream(8192);
+        bm.compress(Bitmap.CompressFormat.JPEG, 80, o);
+        bm.recycle();
+        return o.toByteArray();
     }
 
     /** What the page calls, as window.TrackTimeNative. Runs on a binder thread. */
@@ -619,5 +859,78 @@ public class TrackCameraPlugin extends Plugin {
 
         @JavascriptInterface
         public String fpsRangesText() { return fpsRanges; }
+
+        /** options: {"line":[topU,topV,innerU,innerV],"every":2}. Starts rider identification (models load in the background). */
+        @JavascriptInterface
+        public boolean ridersStart(String options) {
+            try {
+                JSONObject o = new JSONObject(options == null || options.isEmpty() ? "{}" : options);
+                JSONArray a = o.optJSONArray("line");
+                float[] line = riderLine;
+                if (a != null && a.length() >= 4) line = new float[] { (float) a.getDouble(0), (float) a.getDouble(1), (float) a.getDouble(2), (float) a.getDouble(3) };
+                int every = Math.max(1, o.optInt("every", 2));
+                synchronized (riderLock) {
+                    riderLine = line; riderEvery = every; riderFrameNo = 0;
+                    gateBg = null; riderBgWanted = true; busySince = -1; quietFrames = 0;
+                    riderRecent.clear(); riderWork.clear(); riderResults.clear(); riderKeepUntil = -1;
+                    riderBusyFrames = 0; riderDone = 0; riderDropped = 0; riderMs = 0;
+                }
+                final float[] l = line;
+                riderExecutor.execute(() -> { loadRiderEngine(); RiderEngine e = riderEngine; if (e != null) e.setLine(l); });
+                ridersOn = true;
+                return true;
+            } catch (Exception e) {
+                riderError = "start: " + e;
+                return false;
+            }
+        }
+
+        /** A lap crossing at sensor time t (ms): describe the riders from just before it to 8 s after. */
+        @JavascriptInterface
+        public void ridersLap(double t) {
+            synchronized (riderLock) {
+                for (RiderFrame f : riderRecent) if (f.t >= t - RIDER_BEFORE_MS) queueRiderWork(f);
+                riderRecent.clear();
+                riderKeepUntil = Math.max(riderKeepUntil, t + RIDER_AFTER_MS);
+            }
+        }
+
+        /** Stops taking new frames; queued ones are still described. */
+        @JavascriptInterface
+        public void ridersStop() { ridersOn = false; }
+
+        /** Descriptions since the last call, as a JSON array (see RiderEngine.process). */
+        @JavascriptInterface
+        public String ridersPull() {
+            synchronized (riderLock) {
+                if (riderResults.isEmpty()) return "[]";
+                StringBuilder sb = new StringBuilder("[");
+                for (int i = 0; i < riderResults.size(); i++) { if (i > 0) sb.append(','); sb.append(riderResults.get(i)); }
+                riderResults.clear();
+                return sb.append(']').toString();
+            }
+        }
+
+        @JavascriptInterface
+        public String ridersInfo() {
+            try {
+                JSONObject o = new JSONObject();
+                synchronized (riderLock) {
+                    o.put("on", ridersOn);
+                    o.put("ready", riderEngine != null);
+                    o.put("error", riderError == null ? JSONObject.NULL : riderError);
+                    o.put("busyFrames", riderBusyFrames);
+                    o.put("queued", riderWork.size());
+                    o.put("working", riderWorking);
+                    o.put("done", riderDone);
+                    o.put("dropped", riderDropped);
+                    o.put("msPerFrame", riderDone > 0 ? riderMs / riderDone : 0);
+                    o.put("keepUntil", riderKeepUntil);
+                }
+                return o.toString();
+            } catch (Exception e) {
+                return "{}";
+            }
+        }
     }
 }

@@ -12,6 +12,8 @@
 
 /** Lowest app interface version this page works with. */
 export const NATIVE_MIN = 1;
+/** App interface version with rider identification. */
+export const RIDERS_MIN = 2;
 
 /** The app's interface, or null in a browser or an app that is too old. */
 export function nativeApi(w = globalThis) {
@@ -130,6 +132,17 @@ export class NativeCamera {
     try { text = this.api.frames(); } catch { return []; }
     return parseFrames(text).filter((f) => f.samples.length === this.n);
   }
+
+  // Rider identification (app interface 2): see TrackCameraPlugin and js/riders.js.
+  get hasRiders() { try { return this.api.version() >= RIDERS_MIN; } catch { return false; } }
+  ridersStart(line, every = 2) {
+    try { return this.api.ridersStart(JSON.stringify({ line: [line.top.x, line.top.y, line.inner.x, line.inner.y], every })); } catch { return false; }
+  }
+  ridersLap(t) { try { this.api.ridersLap(t); } catch { /* ignored */ } }
+  ridersStop() { try { this.api.ridersStop(); } catch { /* ignored */ } }
+  /** Frames described since the last call: [{ t, w, h, cov, people: [...] }]. */
+  ridersPull() { try { return JSON.parse(this.api.ridersPull() || '[]'); } catch { return []; } }
+  ridersInfo() { try { return JSON.parse(this.api.ridersInfo()); } catch { return {}; } }
 
   lock() { try { return this.api.lock(); } catch { return false; } }
   unlock() { try { this.api.unlock(); } catch { /* ignored */ } }
