@@ -6,5 +6,10 @@
     "test": "node --test --test-reporter=./test/quiet-reporter.mjs test/*.test.mjs",
     "test:verbose": "node --test test/*.test.mjs",
     "screenshot": "node scripts/screenshot.mjs"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
   }
 }

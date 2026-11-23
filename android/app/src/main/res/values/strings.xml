@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="package_name">io.github.yuramonastyrskyy.tracktime</string>
+    <string name="custom_url_scheme">io.github.yuramonastyrskyy.tracktime</string>
+</resources>

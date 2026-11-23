@@ -40,6 +40,7 @@ export const DEFAULT_TUNING = {
   passGapMs: 333,        // a new pass needs this much quiet time on the line
   learnFrames: 45,       // frames used to learn the empty line
   bgAlpha: 0.02,         // how fast the empty-line image adapts to light changes
+  subFrame: false,       // place the crossing between frames (see _crossingTime); on in the app
 };
 
 /**
@@ -242,7 +243,24 @@ export class LineDetector {
     }
     const isNewPass = cand.time - this.lastOkTime > t.passGapMs;
     this.lastOkTime = cand.time;
-    return isNewPass ? cand.time : null;
+    return isNewPass ? this._crossingTime(c) : null;
+  }
+
+  /**
+   * Time of the crossing at frame c. Normally that frame's time. With
+   * subFrame, the moment between the previous frame and this one where the
+   * covered share of the line passed trackTrigger (straight-line
+   * interpolation): the wheel arrived somewhere inside that frame interval,
+   * and the more of the line it already covers, the earlier it came.
+   */
+  _crossingTime(c) {
+    const t = this.t, h = this.history, cand = h[c];
+    if (!t.subFrame || c === 0) return cand.time;
+    const prev = h[c - 1];
+    const dt = cand.time - prev.time;
+    if (!(dt > 0) || dt > 100 || prev.track >= t.trackTrigger || cand.track <= prev.track) return cand.time;
+    const f = (t.trackTrigger - prev.track) / (cand.track - prev.track);
+    return prev.time + Math.min(1, Math.max(0, f)) * dt;
   }
 
   /**

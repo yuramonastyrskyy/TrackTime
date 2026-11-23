@@ -21,4 +21,5 @@ Static web app (no build step) on GitHub Pages: velodrome lap timing from the ph
 - `js/recorder.js` Record + time (video parts, IndexedDB, log/CSV) and session storage
 - `js/plan.js` Pacemaker plans · `js/session.js` sessions + sending · `js/lapLink.js` link to the laptop stopwatch
 - `styles.css` (~34 KB, tokens at the top; `--tt-ui-scale` sets UI size) · `index.html` markup + SVG icon sprite
+- `js/nativeCamera.js` the Android app's camera (window.TrackTimeNative) · `android/` Capacitor shell; native camera in `TrackCameraPlugin.java`. Gradle builds only in GitHub Actions (`android.yml`; Google's Maven is blocked in Claude's cloud container). Bump `TrackCameraPlugin.VERSION` + `NATIVE_MIN` when the interface changes.
 - `audio/en/*.m4a`: voice clips, binary; never read them.

@@ -52,6 +52,21 @@ Pacemaker (the coach's training app) holds track session plans and checks the la
 - **Send to Pacemaker.** After **Stop**, and from Sessions. Nothing is ever sent without that tap, and there are no keys or logins: Pacemaker asks the person to check and save the ride. It POSTs the laps as JSON (`Content-Type: text/plain`, so the browser sends no CORS preflight) to `<api>/api/rides?action=track`, where `<api>` is the plan's `api` or, without a plan, `https://pacemaker-theta.vercel.app` (`DEFAULT_API` in `js/plan.js`). Pacemaker's answer opens in Telegram when TrackTime runs inside Telegram, otherwise in the same tab. Without signal the session stays saved; try again later.
 - For testing, `?pmapi=http://localhost:8787` sends to another address. `test/session.test.mjs` sends to a small local stub server.
 
+## Android app
+
+The Android app (`android/`, a [Capacitor](https://capacitorjs.com) shell) opens the same live site, so every merge reaches it without a new APK, and it keeps working offline like the website. What it adds is its own camera:
+
+- **Locked 60 fps.** The camera runs at a fixed 60 frames a second. In Set up exposure and focus are automatic; **Start timing** takes what they metered on the empty line and locks exposure, focus and white balance for the session, so a dim hall can't slow the camera down. **Stop** goes back to automatic.
+- **Settings → Camera (app)** shows the frame rate (now, and since Start: the lowest second and frames dropped) and the exposure. **Darker** / **Brighter** change it in 1/3 stops (the line is re-learned; the lap clock keeps running).
+- **Hundredths.** Each frame carries the camera sensor's own time, and a crossing is placed between two frames from how much of the line each one covered. The screen, sessions and Pacemaker get 17.43; the voice still says 17.4.
+- Only the finish-line pixels are read from each frame (natively, from the camera's brightness plane) and handed to the same `js/detector.js`. The preview is drawn natively behind the transparent page.
+- No **Record + time** in the app yet (use the browser for that), no LED board yet.
+- **Pacemaker plans:** a plan link opens in the phone's browser; on Android it shows **Open the plan in the TrackTime app**, which hands the plan over.
+
+Install: download `TrackTime.apk` from the newest **Release** (`https://github.com/yuramonastyrskyy/TrackTime/releases/latest/download/TrackTime.apk`) on the phone and open it (allow installs from the browser when asked). The **Android app** workflow builds it when `android/` changes. A pull request that touches the app gets a separate **TrackTime preview** app (pre-release `app-preview`) that loads `/preview/` and installs next to the real one.
+
+The page finds the app through `window.TrackTimeNative` (`js/nativeCamera.js`; version checked, `NATIVE_MIN`). Without it, or in an older app, everything works as in the browser. Native code: `android/app/src/main/java/.../TrackCameraPlugin.java`.
+
 ## Hosting on GitHub Pages
 
 In the repository on GitHub: **Settings → Pages → Build and deployment**, set **Source** to **GitHub Actions**. Every push to `main` then publishes the app at `https://<your-user>.github.io/TrackTime/` (see "Preview of a pull request" below).
