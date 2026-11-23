@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-reporter=./test/quiet-reporter.mjs test/*.test.mjs",
+    "test:verbose": "node --test test/*.test.mjs",
+    "screenshot": "node scripts/screenshot.mjs"
   }
 }
