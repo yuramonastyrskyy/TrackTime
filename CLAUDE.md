@@ -1,0 +1,24 @@
+# TrackTime: notes for Claude
+
+Static web app (no build step) on GitHub Pages: velodrome lap timing from the phone camera. User guide: README.md.
+
+## Commands
+- `npm test`: quiet (failures + one summary line). `npm run test:verbose` for every test.
+- `node scripts/screenshot.mjs out.png --click cameraBtn,settingsBtn`: phone-size screenshot with a fake camera; prints app errors, exit 1 on any. `--hash '#pm=…'`, `--size 844x390`, `--scale 2`. Elements hidden before the camera is on need `cameraBtn` first.
+- `node test/run-clip.mjs part.mp4 --log log.json [--rest]`: replay a recorded clip through the detector (needs ffmpeg).
+- `bash scripts/build-pages.sh <live> <pr> <num> <out>`: the Pages build (live at /, newest open PR at /preview/).
+
+## Every release (hard rules)
+- Bump `?v=N` on both `styles.css` and `js/app.js` in index.html, and `VERSION` in sw.js.
+- A new file the app loads goes into sw.js `SHELL`, or it won't work offline.
+- Storage keys keep the `'tracktime.` / `'tracktime-rec'` / `'tracktime-v` prefixes: build-pages.sh rewrites them for the preview copy.
+- `js/detector.js`, `js/plan.js`, `js/session.js` use no browser APIs (tested in Node). Keep it that way.
+
+## Where things live (read the part you need; app.js is ~50 KB, grep `// ----------` for its sections)
+- `js/app.js`: wiring: state, camera, frame loop, timing, laps, overlay/markers, settings dialog, record mode.
+- `js/lists.js`: Settings > Recordings and Sessions lists, Send to Pacemaker.
+- `js/detector.js` line sampling + lap logic · `js/glsampler.js` GPU pixel reads · `js/speech.js` voice/clips
+- `js/recorder.js` Record + time (video parts, IndexedDB, log/CSV) and session storage
+- `js/plan.js` Pacemaker plans · `js/session.js` sessions + sending · `js/lapLink.js` link to the laptop stopwatch
+- `styles.css` (~34 KB, tokens at the top; `--tt-ui-scale` sets UI size) · `index.html` markup + SVG icon sprite
+- `audio/en/*.m4a`: voice clips, binary; never read them.
