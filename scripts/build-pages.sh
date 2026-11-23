@@ -5,7 +5,7 @@ set -euo pipefail
 live=$1 pr=$2 num=$3 out=$4
 copy() { # app files only (no git, tests, workflows)
   mkdir -p "$2"
-  (cd "$1" && tar --exclude=.git --exclude=.github --exclude=test --exclude=scripts --exclude=node_modules -cf - .) | (cd "$2" && tar -xf -)
+  (cd "$1" && tar --exclude=.git --exclude=.github --exclude=test --exclude=scripts --exclude=node_modules --exclude=android --exclude=native --exclude=capacitor.config.json --exclude='package*.json' -cf - .) | (cd "$2" && tar -xf -)
 }
 rm -rf "$out"
 copy "$live" "$out"

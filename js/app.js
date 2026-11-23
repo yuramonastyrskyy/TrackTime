@@ -6,11 +6,12 @@ import { Announcer } from './speech.js';
 import { GLSampler } from './glsampler.js';
 import { SessionRecorder, store, formatBytes } from './recorder.js';
 import { LapSender, linkOverrides, normalizeCode } from './lapLink.js';
-import { planFromHash, planProgress, boardParts, bandTag, summarize } from './plan.js';
+import { planFromHash, planToHash, planProgress, boardParts, bandTag, summarize } from './plan.js';
 import {
   newSession, sessionStart, sessionLap, sessionUndo,
 } from './session.js';
 import { initLists, openRecordings, resetSendBtn, formatDuration } from './lists.js';
+import { nativeApi, NativeCamera, exposureText, openInAppLink } from './nativeCamera.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -39,15 +40,20 @@ const els = {
   toastText: $('toastText'), toastIcon: $('toastIcon'), startLabel: $('startLabel'), startIcon: $('startIcon'),
   sendLabel: $('sendLabel'), sendIcon: $('sendIcon'), sumTitle: $('sumTitle'), cameraBtnLabel: $('cameraBtnLabel'),
   sessionsSub: $('sessionsSub'), recordingsSub: $('recordingsSub'),
+  openAppBtn: $('openAppBtn'), nativeGroup: $('nativeGroup'), camRate: $('camRate'), camExposure: $('camExposure'),
+  expDarker: $('expDarker'), expBrighter: $('expBrighter'),
   recStorage: $('recStorage'), recStorageText: $('recStorageText'), recStorageFill: $('recStorageFill'),
 };
+// Inside the TrackTime Android app: its own camera (see js/nativeCamera.js).
+const native = nativeApi();
+document.documentElement.classList.toggle('native-app', !!native);
 /** Sets text only when it changed, so nothing re-lays out for nothing. */
 function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
 
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
@@ -75,6 +81,13 @@ let micTrack = null;
 let lastFrameT = 0;          // detection clock of the newest frame
 let sec = { frames: 0, track: 0, apron: 0 }; // per-second stats for the log
 let mediaEpoch = null;       // wall-clock anchor when frame times come from mediaTime
+let ncam = null;             // NativeCamera while the app's camera is on
+let camStats = null;         // app camera: { minFps, dropped0 } since Start timing
+/** Picture size in display orientation (browser video or the app's camera). */
+const vidW = () => (ncam ? ncam.width : els.video.videoWidth);
+const vidH = () => (ncam ? ncam.height : els.video.videoHeight);
+/** The voice says tenths in the app, where the screen shows hundredths. */
+const voiceDecimals = () => (ncam ? Math.min(1, settings.decimals) : settings.decimals);
 
 // ---------- laptop stopwatch link ----------
 const lapLink = new LapSender({ ...linkOverrides(location.search), onState: renderLink });
@@ -99,6 +112,7 @@ function renderLink(s) {
 }
 /** Wall-clock time (epoch ms) of a frame time from the detector clock. */
 function frameEpoch(t) {
+  if (timeSource === 'native') return ncam.epochOffset + t; // sensor clock + its offset
   // captureTime and rVFC/rAF "now" share the performance.now() timeline.
   if (timeSource !== 'media') return performance.timeOrigin + t;
   mediaEpoch ??= Date.now() - lastFrameT;
@@ -119,6 +133,7 @@ function setPlan(p) {
     if (p) sessionStorage.setItem(PLAN_KEY, JSON.stringify(p)); else sessionStorage.removeItem(PLAN_KEY);
   } catch { /* private mode */ }
   if (session && !session.laps.length) { session.plan = p; persistSession(); }
+  renderOpenInApp();
   announcedBlock = 0;
   planTop = 0; planOverMarkers = false;
   renderPlan();
@@ -268,7 +283,7 @@ function setState(s) {
   els.startIcon.setAttribute('href', active ? '#i-stop' : '#i-play');
   els.startBtn.className = active ? 'btn main stop' : 'btn main primary full';
   els.actions.classList.toggle('timing', active);
-  els.recBtn.hidden = active;
+  els.recBtn.hidden = active || !!ncam; // Record + time stays in the browser for now
   els.settingsBtn.className = active ? 'btn main icon ghost' : 'btn ghost';
   els.markBtn.hidden = !(active && recorder);
   els.sendBtn.hidden = active || !lastSession?.laps.length;
@@ -293,6 +308,7 @@ function renderLayout() {
 els.cameraBtn.addEventListener('click', startCamera);
 async function startCamera() {
   els.cameraError.hidden = true;
+  if (native) { startNativeCamera(); return; }
   if (!navigator.mediaDevices?.getUserMedia) {
     showCameraError("This browser can't use the camera", 'Open the app in Safari or Chrome over https.');
     return;
@@ -332,6 +348,32 @@ async function startCamera() {
   setState('setup');
   scheduleFrame();
 }
+async function startNativeCamera() {
+  const cam = new NativeCamera(native);
+  els.cameraBtn.disabled = true;
+  try {
+    await cam.start({ fps: 60 });
+  } catch (err) {
+    if (err?.name === 'NotAllowedError') {
+      showCameraError('Camera access was blocked', err.permanent
+        ? 'Allow the camera for TrackTime in the phone settings (App info > Permissions), then try again.'
+        : 'Tap the button below and allow the camera.');
+      if (err.permanent) cam.openSettings();
+    } else {
+      showCameraError("The camera didn't start", `${err?.message || 'Unknown error'}. Close other camera apps and try again.`);
+    }
+    return;
+  } finally {
+    els.cameraBtn.disabled = false;
+  }
+  ncam = cam;
+  document.documentElement.classList.add('native-cam');
+  els.intro.hidden = true;
+  els.hud.hidden = false;
+  els.panel.hidden = false;
+  setState('setup');
+  scheduleFrame();
+}
 function showCameraError(title, msg) {
   els.cameraErrorTitle.textContent = title;
   els.cameraErrorText.textContent = msg;
@@ -342,7 +384,8 @@ function showCameraError(title, msg) {
 // ---------- frame loop ----------
 const hasVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 function scheduleFrame() {
-  if (hasVFC) els.video.requestVideoFrameCallback(onFrame);
+  if (ncam) requestAnimationFrame(onNativeTick);
+  else if (hasVFC) els.video.requestVideoFrameCallback(onFrame);
   else requestAnimationFrame((now) => onFrame(now, null));
 }
 
@@ -356,6 +399,33 @@ function frameTime(now, meta) {
   if (timeSource === 'capture' && meta?.captureTime) return meta.captureTime;
   if (timeSource === 'media' && meta?.mediaTime) return meta.mediaTime * 1000;
   return now;
+}
+
+// App camera: frames arrive in batches (sensor time + the line samples, read
+// natively); each one goes through the same detection as a browser frame.
+let nativeSecond = 0;
+function onNativeTick(now) {
+  if (!ncam) return;
+  const frames = ncam.pull();
+  if (now - nativeSecond > 1000) {
+    nativeSecond = now;
+    const i = ncam.info();
+    if (ncam.update(i)) {
+      drawOverlay();
+      if (detector) { try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ } }
+    }
+    if (camStats && i.fps && !resting) camStats.minFps = Math.min(camStats.minFps, i.fps);
+    els.fps.textContent = `${i.fps || 0} fps · app${resting ? ' · rest' : ''}`;
+    if (els.settings.open) fillCamera(i);
+  }
+  if (detector && frames.length) {
+    for (const f of frames) {
+      if (!detector) break;
+      detectFrame(f.t, () => samples.set(f.samples));
+    }
+    drawOverlay();
+  }
+  scheduleFrame();
 }
 
 function onFrame(now, meta) {
@@ -374,49 +444,50 @@ function onFrame(now, meta) {
       showRecInfo();
     }
   }
-  if (detector && els.video.videoWidth) {
-    const t = frameTime(now, meta);
-    if (shouldRest(t)) {
-      // Inside the ignore window nothing can count, so skip the pixel reading
-      // and detection (the heavy part) to keep the phone cooler. The camera
-      // and any recording keep running.
-      if (!resting) {
-        resting = true;
-        detector.skipGap();
-        recorder?.log('rest', { frameT: Math.round(t), detail: `detection paused until ${(RESUME_EARLY_MS / 1000).toFixed(1)} s before the window ends` });
-        drawOverlay();
-      }
-      lastFrameT = t;
-      scheduleFrame();
-      return;
-    }
-    if (resting) {
-      resting = false;
-      recorder?.log('resume', { frameT: Math.round(t) });
-    }
-    readFrame();
-    const relearnsBefore = detector.relearns, singlesBefore = detector.singles.length;
-    const hit = detector.push(samples, t);
-    lastFrameT = t;
-    if (detector.relearns !== relearnsBefore) {
-      recorder?.log('relearn', { frameT: t, detail: 'line looked covered for 4 s; re-learned the empty line' });
-    }
-    if (detector.singles.length !== singlesBefore) {
-      recorder?.log('single', { frameT: detector.singles[detector.singles.length - 1], detail: 'one rider or passer-by, not a team: ignored' });
-      if (detector.singles.length > 50) detector.singles.splice(0, 25);
-    }
-    if (recorder && detector && !detector.learning) {
-      sec.frames++;
-      sec.track = Math.max(sec.track, detector.level.track);
-      sec.apron = Math.max(sec.apron, detector.level.apron);
-    }
-    if (state === 'learning' && !detector.learning) setState(counter.startTime === null ? 'armed' : 'timing');
-    if (hit !== null) onCrossing(hit);
-  }
+  if (detector && els.video.videoWidth) detectFrame(frameTime(now, meta), readFrame);
   // In Set up nothing on the overlay changes between frames (no detector), so
   // it is only redrawn on a drag, a resize or a state change.
   if (detector) drawOverlay();
   scheduleFrame();
+}
+
+/** Detection for one frame at time t; read() fills `samples`. */
+function detectFrame(t, read) {
+  if (shouldRest(t)) {
+    // Inside the ignore window nothing can count, so skip the pixel reading
+    // and detection (the heavy part) to keep the phone cooler. The camera
+    // and any recording keep running.
+    if (!resting) {
+      resting = true;
+      detector.skipGap();
+      recorder?.log('rest', { frameT: Math.round(t), detail: `detection paused until ${(RESUME_EARLY_MS / 1000).toFixed(1)} s before the window ends` });
+      drawOverlay();
+    }
+    lastFrameT = t;
+    return;
+  }
+  if (resting) {
+    resting = false;
+    recorder?.log('resume', { frameT: Math.round(t) });
+  }
+  read();
+  const relearnsBefore = detector.relearns, singlesBefore = detector.singles.length;
+  const hit = detector.push(samples, t);
+  lastFrameT = t;
+  if (detector.relearns !== relearnsBefore) {
+    recorder?.log('relearn', { frameT: t, detail: 'line looked covered for 4 s; re-learned the empty line' });
+  }
+  if (detector.singles.length !== singlesBefore) {
+    recorder?.log('single', { frameT: detector.singles[detector.singles.length - 1], detail: 'one rider or passer-by, not a team: ignored' });
+    if (detector.singles.length > 50) detector.singles.splice(0, 25);
+  }
+  if (recorder && detector && !detector.learning) {
+    sec.frames++;
+    sec.track = Math.max(sec.track, detector.level.track);
+    sec.apron = Math.max(sec.apron, detector.level.apron);
+  }
+  if (state === 'learning' && !detector.learning) setState(counter.startTime === null ? 'armed' : 'timing');
+  if (hit !== null) onCrossing(hit);
 }
 
 // "Rest between laps": skip detection inside the ignore window (see
@@ -469,11 +540,22 @@ function readFrame() {
 }
 
 function prepareDetector({ keepClock = false } = {}) {
-  const vw = els.video.videoWidth, vh = els.video.videoHeight;
+  const vw = vidW(), vh = vidH();
   const s = 960 / Math.max(vw, vh);
   // Samples are placed on a virtual frame scaled to 960 px on the long side.
   proc = { width: Math.round(vw * s), height: Math.round(vh * s), scale: s };
   sampler = buildSampler(proc.width, proc.height, settings.line);
+  samples = new Uint8Array(sampler.sampleCount);
+  detector = new LineDetector(sampler, detectorTuning());
+  if (!keepClock) { timeSource = null; mediaEpoch = null; }
+  if (ncam) {
+    // The app reads the samples itself, at the same normalised positions.
+    glSampler = null; readTimes = null; procCtx = null;
+    ncam.setSampler(sampler);
+    timeSource = 'native';
+    recorder?.log('detector', { detail: `${proc.width}x${proc.height}, ${sampler.sampleCount} samples, ${sampler.rowCount} rows, app camera ${vw}x${vh}` });
+    return;
+  }
   const canvas = document.createElement('canvas');
   canvas.width = sampler.box.w;
   canvas.height = sampler.box.h;
@@ -485,9 +567,6 @@ function prepareDetector({ keepClock = false } = {}) {
     try { glSampler = new GLSampler(sampler); } catch { glSampler = null; }
     if (glSampler && forced !== 'gpu') readTimes = { gpu: [], canvas: [] };
   }
-  samples = new Uint8Array(sampler.sampleCount);
-  detector = new LineDetector(sampler, detectorTuning());
-  if (!keepClock) { timeSource = null; mediaEpoch = null; }
   recorder?.log('detector', { detail: `${proc.width}x${proc.height}, ${sampler.sampleCount} samples, ${sampler.rowCount} rows, ${glSampler ? 'gpu' : 'canvas'}, camera ${vw}x${vh}` });
 }
 
@@ -508,7 +587,7 @@ els.startBtn.addEventListener('click', async () => {
 });
 
 function startTiming() {
-  if (!els.video.videoWidth) return false;
+  if (!vidW()) return false;
   announcer.unlock(); // inside the tap, so phones allow sound
   counter.ignoreMs = settings.ignoreSec * 1000;
   counter.reset();
@@ -519,6 +598,13 @@ function startTiming() {
   renderLaps();
   renderPlan();
   try { prepareDetector(); } catch (e) { els.lapInfo.textContent = e.message; return false; }
+  if (ncam) {
+    // Meter once on the empty track (it has been metering all through Set up),
+    // then hold exposure, focus and white balance for the whole session.
+    ncam.lock();
+    const i = ncam.info();
+    camStats = { minFps: Infinity, dropped0: i.dropped || 0 };
+  }
   setState('learning');
   requestWakeLock();
   return true;
@@ -526,11 +612,12 @@ function startTiming() {
 
 function stopTiming() {
   detector = null;
+  if (ncam) ncam.unlock();
   finishSession();
   releaseWakeLock();
   if (recorder) stopRecording();
   renderSummary();
-  if (stream) setState('setup');
+  if (stream || ncam) setState('setup');
 }
 
 // Session summary after Stop: drawn once, never during timing.
@@ -588,8 +675,7 @@ function onCrossing(t) {
     announcer.sayStart();
     renderPlan();
   } else if (r.type === 'lap') {
-    const text = formatLap(r.ms, settings.decimals);
-    announcer.sayLap(text, lapExtras());
+    announcer.sayLap(formatLap(r.ms, voiceDecimals()), lapExtras());
     renderLaps();
     renderPlan();
   }
@@ -603,7 +689,7 @@ function lapExtras() {
   const last = p.results[p.results.length - 1];
   const nextBlock = !p.done && p.index > announcedBlock;
   announcedBlock = Math.max(announcedBlock, p.index);
-  return { gap: last?.gap ?? null, decimals: settings.decimals, nextBlock };
+  return { gap: last?.gap ?? null, decimals: voiceDecimals(), nextBlock };
 }
 
 // Undo takes two taps and says which lap it will remove.
@@ -688,7 +774,7 @@ function renderLaps() {
 const octx = els.overlay.getContext('2d');
 function contentRect() {
   const W = els.overlay.clientWidth, H = els.overlay.clientHeight;
-  const vw = els.video.videoWidth || 1080, vh = els.video.videoHeight || 1920;
+  const vw = vidW() || 1080, vh = vidH() || 1920;
   const s = Math.min(W / vw, H / vh);
   return { x: (W - vw * s) / 2, y: (H - vh * s) / 2, w: vw * s, h: vh * s };
 }
@@ -883,8 +969,11 @@ els.video.addEventListener('resize', drawOverlay);
 els.video.addEventListener('loadedmetadata', drawOverlay);
 
 function detectorTuning() {
-  // "Count single riders" turns off the team check (for solo efforts).
-  return settings.countSingles ? { ...DEFAULT_TUNING, groupMinCoverMs: 0 } : DEFAULT_TUNING;
+  // "Count single riders" turns off the team check (for solo efforts). The
+  // app's exact frame times make placing a crossing between frames worth it.
+  const t = { ...DEFAULT_TUNING, subFrame: !!ncam };
+  if (settings.countSingles) t.groupMinCoverMs = 0;
+  return t;
 }
 
 // ---------- settings dialog ----------
@@ -914,6 +1003,7 @@ function fillSettings() {
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
+  if (native) fillCamera();
   fillTiles();
   els.copyNote.hidden = true;
   els.settings.showModal();
@@ -968,7 +1058,7 @@ els.highContrast.addEventListener('change', () => { settings.highContrast = els.
 applyContrast();
 els.testVoiceBtn.addEventListener('click', async () => {
   await announcer.unlock();
-  announcer.sayLap(formatLap(17430, settings.decimals));
+  announcer.sayLap(formatLap(17430, voiceDecimals()));
 });
 els.resetMarkersBtn.addEventListener('click', () => {
   settings.line = structuredClone(DEFAULT_LINE); save(); drawOverlay();
@@ -1022,6 +1112,49 @@ document.addEventListener('visibilitychange', () => {
     try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ }
   }
 });
+
+// ---------- Android app ----------
+function setupNative() {
+  if (!native) { renderOpenInApp(); return; }
+  // A Pacemaker plan handed over by the "Open in app" button (at launch, or
+  // while the app is already open).
+  const take = () => {
+    let h = '';
+    try { h = native.takeLaunchHash() || ''; } catch { /* ignored */ }
+    if (h) location.hash = h;
+  };
+  window.__ttNativeIntent = take;
+  take();
+  els.nativeGroup.hidden = false;
+}
+// In Chrome on Android, with a plan: a button that hands the plan to the app.
+function renderOpenInApp() {
+  const show = !native && !!plan && /Android/i.test(navigator.userAgent);
+  els.openAppBtn.hidden = !show;
+  if (show) els.openAppBtn.href = openInAppLink(planToHash(plan), location.origin + location.pathname);
+}
+function fillCamera(i = ncam?.info()) {
+  if (!i) return;
+  if (!ncam) { els.camRate.textContent = 'Turn on the camera to see it.'; return; }
+  let rate = `${i.fps || 0} fps now, target ${i.fpsTarget ?? '?'}`;
+  if (camStats) {
+    const low = Number.isFinite(camStats.minFps) ? camStats.minFps : i.fps;
+    rate += ` · since Start: lowest ${low}, ${Math.max(0, (i.dropped || 0) - camStats.dropped0)} frames dropped`;
+  }
+  if (!i.manualSensor) rate += ' · this camera has no manual exposure';
+  setText(els.camRate, rate);
+  setText(els.camExposure, exposureText(i));
+}
+function nudgeExposure(d) {
+  if (!ncam) return;
+  ncam.nudge(d);
+  // The picture of the empty line changes with the exposure: learn it again
+  // (the lap clock keeps running).
+  if (detector) { try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ } }
+  setTimeout(() => fillCamera(), 300);
+}
+els.expDarker.addEventListener('click', () => nudgeExposure(-1));
+els.expBrighter.addEventListener('click', () => nudgeExposure(1));
 
 // ---------- Telegram mini app ----------
 function setupTelegram() {
@@ -1174,5 +1307,6 @@ initLists({
 
 
 readPlanLink();
+setupNative();
 renderPlan();
 renderLaps();

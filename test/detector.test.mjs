@@ -157,3 +157,28 @@ test('resting between laps: skipped frames give the same laps, no false relearn'
     if (rest) assert.ok(skipped > 0.6 * (60000 / step), `skipped ${skipped}`);
   }
 });
+
+test('subFrame places the crossing between frames (app, 60 fps)', () => {
+  const s = buildSampler(540, 960);
+  const trackRowCount = [...s.rowIsApron].filter((a) => !a).length;
+  const step = 1000 / 60;
+  // A wheel arrives 3 ms after a frame; the covered share of the line then
+  // grows by 0.8 per 100 ms, so it passes the trigger (0.08) 10 ms later.
+  const arrive = 2000 + 3;
+  const trueCross = arrive + (DEFAULT_TUNING.trackTrigger / 0.8) * 100;
+  const rows = (t) => Math.round(Math.max(0, Math.min(0.8, ((t - arrive) / 100) * 0.8)) * trackRowCount);
+  const hits = {};
+  for (const subFrame of [false, true]) {
+    const det = new LineDetector(s, { ...ANYONE, subFrame });
+    let hit = null;
+    for (let i = 0; i < 240; i++) {
+      const t = i * step;
+      hit = det.push(frame(s, 200, { trackRows: t < arrive + 300 ? rows(t) : 0 }), t) ?? hit;
+    }
+    hits[subFrame] = hit;
+  }
+  const firstFrame = Math.ceil(trueCross / step) * step;
+  assert.ok(Math.abs(hits.false - firstFrame) < 1e-6, `frame time ${hits.false} vs ${firstFrame}`);
+  assert.ok(Math.abs(hits.true - trueCross) < 3, `sub-frame ${hits.true.toFixed(2)} vs ${trueCross.toFixed(2)}`);
+  assert.ok(hits.true < hits.false);
+});

@@ -1,0 +1,12 @@
+{
+  "appId": "io.github.yuramonastyrskyy.tracktime",
+  "appName": "TrackTime",
+  "webDir": "native/www",
+  "server": {
+    "url": "https://yuramonastyrskyy.github.io/TrackTime/",
+    "errorPath": "index.html"
+  },
+  "android": {
+    "backgroundColor": "#0a1622"
+  }
+}

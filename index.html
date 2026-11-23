@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=28">
+  <link rel="stylesheet" href="styles.css?v=30">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -95,6 +95,7 @@
       </ol>
       <div class="spacer"></div>
       <button id="cameraBtn" class="btn main primary full" type="button"><svg aria-hidden="true"><use href="#i-camera"/></svg><span id="cameraBtnLabel">Turn on camera</span></button>
+      <a id="openAppBtn" class="btn ghost full open-app" hidden>Open the plan in the TrackTime app</a>
     </section>
 
     <header class="hud compact" id="hud" hidden>
@@ -215,6 +216,22 @@
             </div>
           </section>
 
+          <section id="nativeGroup" class="group" aria-labelledby="gCamera" hidden>
+            <h3 id="gCamera" class="group-h">Camera (app)</h3>
+            <div class="card">
+              <div class="row">
+                <span class="lbl"><b>Frame rate</b><small id="camRate">–</small></span>
+              </div>
+              <div class="row">
+                <span class="lbl"><b id="expLbl">Exposure</b><small id="camExposure">Automatic until you tap Start timing.</small></span>
+                <span class="seg" role="group" aria-labelledby="expLbl">
+                  <button id="expDarker" type="button">Darker</button>
+                  <button id="expBrighter" type="button">Brighter</button>
+                </span>
+              </div>
+            </div>
+          </section>
+
           <section class="group" aria-labelledby="gVoice">
             <h3 id="gVoice" class="group-h">Voice</h3>
             <div id="voice" class="card" role="radiogroup" aria-labelledby="gVoice">
@@ -311,6 +328,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=28"></script>
+  <script type="module" src="js/app.js?v=30"></script>
 </body>
 </html>

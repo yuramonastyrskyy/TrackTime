@@ -111,6 +111,10 @@ html, body { height: 100%; margin: 0; }
   object-fit: contain;
 }
 .tt video { background: #000; }
+/* Android app: its camera preview is drawn natively behind the page. */
+html.native-cam, html.native-cam body, html.native-cam .tt { background: transparent; }
+html.native-cam .tt video { display: none; }
+.tt .open-app { margin-top: 10px; text-decoration: none; }
 .tt .overlay { touch-action: none; }
 
 /* ---------- HUD (riders + coach on top, operator strip above it) ---------- */
