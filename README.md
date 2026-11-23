@@ -54,7 +54,7 @@ Pacemaker (the coach's training app) holds track session plans and checks the la
 
 ## Hosting on GitHub Pages
 
-In the repository on GitHub: **Settings → Pages → Build and deployment**, set **Source** to "Deploy from a branch", choose `main` and `/ (root)`, then **Save**. After a minute the app is live at `https://<your-user>.github.io/TrackTime/`.
+In the repository on GitHub: **Settings → Pages → Build and deployment**, set **Source** to **GitHub Actions**. Every push to `main` then publishes the app at `https://<your-user>.github.io/TrackTime/` (see "Preview of a pull request" below).
 
 To open it from a Telegram bot, set that address as the bot's menu button or mini app URL in BotFather.
 
@@ -68,6 +68,7 @@ Code:
 - `js/detector.js`: line sampling, crossing detection and lap logic (no browser APIs, tested in Node).
 - `js/speech.js`: announcements, using the phone's voice or the recorded clips in `audio/en/`.
 - `js/app.js`: camera, markers, screens and settings.
+- `js/lists.js`: Settings → Recordings and Sessions lists, and Send to Pacemaker.
 - `js/recorder.js`: Record + log mode (video parts, IndexedDB storage, log and CSV, sharing), and storage for timing sessions.
 - `js/plan.js`: Pacemaker plans: reading the link, the plan clock, targets, breaks and lap colours (no browser APIs, tested in Node).
 - `js/session.js`: timing sessions and sending them to Pacemaker (tested in Node).
@@ -78,7 +79,9 @@ The clips in `audio/en/` are generated with espeak-ng. You can replace any of th
 ## Tests
 
 ```sh
-npm test                                   # lap logic, sampling, plans and sessions
+npm test                                   # lap logic, sampling, plans and sessions (prints failures + a summary)
+npm run test:verbose                       # every test by name
+node scripts/screenshot.mjs shot.png --click cameraBtn   # phone screenshot with a fake camera (needs Playwright)
 CLIPS_DIR=path/to/video_footage npm test   # also replays trimmed_01..03.mp4 (needs ffmpeg)
 node test/run-clip.mjs clip.mp4            # print what the app would announce for a video
 ```
