@@ -1,21 +1,26 @@
 // Riders after Stop (Android app): the lap leaders under the session summary,
 // and the review sheet where the guesses are checked before sending to
-// Pacemaker. Matching itself is in js/riders.js; this only draws and takes taps.
+// Pacemaker, for the session just timed or any saved one (Settings >
+// Sessions > Review). Matching and corrections are in js/riders.js; this only
+// draws and takes taps.
 
-import { IGNORED } from './riders.js';
+import { IGNORED, correctSaved, renameSaved, unsureLeaders } from './riders.js';
 import { formatLap } from './detector.js';
 
 const $ = (id) => document.getElementById(id);
 
 export class RidersView {
   /**
-   * get(): { run, session, decimals } for the last session (run may be null
-   * while the app is still describing frames). changed(): after a correction
-   * or a new name (save the session and the riders).
+   * book(): the riders kept between sessions. decimals(): lap time decimals.
+   * changed(session): after a correction or a new name (save the session and
+   * the book). closed(session): the sheet was closed.
    */
-  constructor({ get, changed }) {
-    this.get = get;
+  constructor({ book, decimals, changed, closed = () => {} }) {
+    this.book = book;
+    this.decimals = decimals;
     this.changed = changed;
+    this.closed = closed;
+    this.session = null; // the session in the sheet
     this.pick = null; // { key, i } while choosing who a crossing is
     this.els = {
       sum: $('sumRiders'), leaders: $('sumLeaders'), btn: $('ridersBtn'), btnLabel: $('ridersBtnLabel'),
@@ -23,22 +28,28 @@ export class RidersView {
       pickBox: $('riderPick'), pickTitle: $('riderPickTitle'), pickList: $('riderPickList'),
       pickNew: $('riderPickNew'), pickIgnore: $('riderPickIgnore'), pickCancel: $('riderPickCancel'),
     };
-    this.els.btn.addEventListener('click', () => this.open());
-    this.els.leaders.addEventListener('click', () => this.open());
+    this.els.btn.addEventListener('click', () => this.open(this.summarySession));
+    this.els.leaders.addEventListener('click', () => this.open(this.summarySession));
     this.els.pickNew.addEventListener('click', () => this.choose(null));
     this.els.pickIgnore.addEventListener('click', () => this.choose(IGNORED));
     this.els.pickCancel.addEventListener('click', () => { this.pick = null; this.render(); });
-    this.els.dlg.addEventListener('close', () => { this.pick = null; this.renderSummary(); });
+    this.els.dlg.addEventListener('close', () => {
+      this.pick = null;
+      this.renderSummary(this.summarySession, this.summaryWaiting);
+      this.closed(this.session);
+    });
+    this.summarySession = null;
+    this.summaryWaiting = null;
   }
 
-  keys() {
-    const { session } = this.get();
+  keys(session = this.session) {
     return session ? [0, ...session.laps.map((l) => l.lap)] : [];
   }
 
   /** Under the summary: one picture per lap (its leader), and the button. */
-  renderSummary(waiting = null) {
-    const { session } = this.get();
+  renderSummary(session, waiting = null) {
+    this.summarySession = session;
+    this.summaryWaiting = waiting;
     const R = session?.riders;
     const e = this.els;
     if (!session || (!R && !waiting)) { e.sum.hidden = true; return; }
@@ -69,24 +80,27 @@ export class RidersView {
     e.btn.classList.toggle('send', unsure > 0);
   }
 
-  open() {
+  /** The sheet for a session (the one just timed, or a saved one). */
+  open(session) {
+    if (!session) return;
+    this.session = session;
     this.pick = null;
     this.render();
     if (!this.els.dlg.open) this.els.dlg.showModal();
   }
 
   render() {
-    const { run, session, decimals } = this.get();
+    const session = this.session, decimals = this.decimals(), book = this.book();
     const e = this.els;
     const R = session?.riders;
     if (!R) {
-      e.roster.replaceChildren(); e.laps.replaceChildren();
+      e.roster.replaceChildren(); e.laps.replaceChildren(); e.pickBox.hidden = true;
       e.wait.hidden = false; e.wait.textContent = 'Still looking at the last laps…';
       return;
     }
     e.wait.hidden = true;
     const keys = this.keys();
-    const unsure = keys.filter((k) => R.laps[k]?.leader && !R.laps[k].sure).length;
+    const unsure = unsureLeaders(R, keys);
     e.sub.textContent = unsure ? ` · ${unsure} to check` : ' · all checked';
 
     // Riders: picture + name (editable), laps led.
@@ -99,9 +113,7 @@ export class RidersView {
       const name = document.createElement('input');
       name.type = 'text'; name.value = r.name; name.maxLength = 30; name.setAttribute('aria-label', `Name of ${r.name}`);
       name.addEventListener('change', () => {
-        run?.book.rename(r.id, name.value);
-        r.name = name.value.trim() || r.name;
-        this.changed();
+        if (renameSaved(R, book, r.id, name.value)) this.changed(session);
         this.render();
       });
       const small = document.createElement('small');
@@ -125,19 +137,17 @@ export class RidersView {
       head.append(b, k === 0 ? '' : formatLap(lapMs.get(k), decimals));
       const row = document.createElement('div');
       row.className = 'row-x';
-      const w = run?.window(k);
       x.order.forEach((o, i) => {
         const btn = document.createElement('button');
         btn.type = 'button';
         const isLead = o.id === x.leader && o.id !== IGNORED && i === x.order.findIndex((q) => q.id === x.leader);
-        btn.className = `xing${isLead ? ' lead' : ''}${!o.sure && o.id !== IGNORED ? ' unsure' : ''}${o.id === IGNORED ? ' ignored' : ''}${this.pick && this.pick.key === k && this.pick.t === o.t ? ' picking' : ''}`;
+        btn.className = `xing${isLead ? ' lead' : ''}${!o.sure && o.id !== IGNORED ? ' unsure' : ''}${o.id === IGNORED ? ' ignored' : ''}${this.pick && this.pick.key === k && this.pick.i === i ? ' picking' : ''}`;
         const who = o.id === IGNORED ? 'not a rider' : (byId.get(o.id)?.name || '?');
         btn.append(picture(o.thumb, who));
         const s = document.createElement('span'); s.textContent = who;
         btn.append(s);
         btn.setAttribute('aria-label', `${k === 0 ? 'Start' : `Lap ${k}`}, ${isLead ? 'first: ' : ''}${who}${o.sure ? '' : ', unsure'}`);
-        if (w) btn.addEventListener('click', () => { this.pick = { key: k, t: o.t }; this.render(); });
-        else btn.disabled = true;
+        btn.addEventListener('click', () => { this.pick = { key: k, i }; this.render(); });
         row.append(btn);
       });
       li.append(head, row);
@@ -148,7 +158,7 @@ export class RidersView {
     e.pickBox.hidden = !this.pick;
     if (this.pick) {
       e.pickTitle.textContent = `Who is this? (${this.pick.key === 0 ? 'start' : `lap ${this.pick.key}`})`;
-      e.pickList.replaceChildren(...R.riders.concat(run ? run.book.riders.filter((r) => !byId.has(r.id)).map((r) => ({ id: r.id, name: r.name, thumb: r.thumb })) : []).map((r) => {
+      e.pickList.replaceChildren(...R.riders.concat(book.riders.filter((r) => !byId.has(r.id)).map((r) => ({ id: r.id, name: r.name, thumb: r.thumb }))).map((r) => {
         const btn = document.createElement('button');
         btn.type = 'button'; btn.className = 'rider';
         btn.append(picture(r.thumb, r.name));
@@ -163,16 +173,9 @@ export class RidersView {
 
   /** The picked crossing is rider id (null: a new rider; IGNORED: not a team rider). */
   choose(id) {
-    const { run } = this.get();
     const p = this.pick;
     this.pick = null;
-    if (!run || !p) { this.render(); return; }
-    const w = run.window(p.key);
-    if (w) {
-      const i = w.crossings.findIndex((c) => Math.round(c.t - w.T) === p.t);
-      if (i >= 0) run.correct(p.key, i, id);
-    }
-    this.changed();
+    if (p && correctSaved(this.session?.riders, this.book(), p.key, p.i, id)) this.changed(this.session);
     this.render();
   }
 }
@@ -193,3 +196,13 @@ function picture(src, alt) {
   img.src = src; img.alt = alt || '';
   return img;
 }
+
+/** Who led crossing `key` of a session: { name, thumb, sure }, or null. */
+export function leaderOf(session, key) {
+  const R = session?.riders;
+  const x = R?.laps?.[key];
+  if (!x || !x.leader) return null;
+  const r = R.riders.find((q) => q.id === x.leader);
+  return { name: r?.name || '?', thumb: leaderThumb(x) || r?.thumb || null, sure: !!x.sure };
+}
+export { picture };

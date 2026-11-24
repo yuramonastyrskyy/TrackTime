@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="styles.css?v=33">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -388,6 +388,30 @@
       </form>
     </dialog>
 
+    <dialog id="review" class="sheet" aria-labelledby="reviewTitle">
+      <form method="dialog" class="sheet-form">
+        <div class="grab"></div>
+        <header class="sheet-head">
+          <button id="reviewBack" class="back" type="button" aria-label="Back to Sessions"><svg aria-hidden="true"><use href="#i-back"/></svg></button>
+          <h2 id="reviewTitle">Session<small id="reviewSub"></small></h2>
+        </header>
+        <div class="sheet-body tight">
+          <p id="reviewMeta" class="meta"></p>
+          <div id="reviewRiders" class="sum-riders" hidden>
+            <div id="reviewLeaders" class="leaders" aria-label="Lap leaders"></div>
+            <button id="reviewRidersBtn" class="btn sm ghost" type="button">Check riders</button>
+          </div>
+          <p id="reviewHint" class="note">Tap a lap to see its photo-finish.</p>
+          <ol id="reviewLaps" class="rv-laps" aria-label="Laps"></ol>
+        </div>
+        <footer class="sheet-foot stacked">
+          <button id="reviewSend" class="btn main send full" type="button" hidden>Send to Pacemaker</button>
+          <p id="reviewNote" class="note" role="status" hidden></p>
+          <button class="btn main primary full" value="close">Done</button>
+        </footer>
+      </form>
+    </dialog>
+
     <dialog id="recordings" class="sheet" aria-labelledby="recordingsTitle">
       <form method="dialog" class="sheet-form">
         <div class="grab"></div>
@@ -406,6 +430,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=32"></script>
+  <script type="module" src="js/app.js?v=33"></script>
 </body>
 </html>

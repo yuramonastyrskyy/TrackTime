@@ -2,6 +2,9 @@
 // DOM only; app.js passes in what it owns through initLists().
 import { sessionFiles, shareOrDownload, store, formatBytes } from './recorder.js';
 import { sessionDuration, sendSession, apiFor } from './session.js';
+import { formatLap } from './detector.js';
+import { unsureLeaders } from './riders.js';
+import { leaderOf, picture } from './ridersView.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -9,6 +12,9 @@ const els = {
   recStorage: $('recStorage'), recStorageText: $('recStorageText'), recStorageFill: $('recStorageFill'),
   sessionsBtn: $('sessionsBtn'), sessions: $('sessions'), sessList: $('sessList'),
   sendBtn: $('sendBtn'), sendNote: $('sendNote'), sendLabel: $('sendLabel'), sendIcon: $('sendIcon'),
+  review: $('review'), reviewBack: $('reviewBack'), reviewSub: $('reviewSub'), reviewMeta: $('reviewMeta'),
+  reviewRiders: $('reviewRiders'), reviewLeaders: $('reviewLeaders'), reviewRidersBtn: $('reviewRidersBtn'),
+  reviewHint: $('reviewHint'), reviewLaps: $('reviewLaps'), reviewSend: $('reviewSend'), reviewNote: $('reviewNote'),
 };
 
 /**
@@ -17,6 +23,9 @@ const els = {
  * running now; sessionId() id of the session being timed; lastSession() the
  * last finished session; forgetLastSession(id) after it was deleted;
  * backToSettings() reopens Settings from a list's back arrow.
+ * Review: decimals(); ridersWaiting(s) true while the app still matches s's
+ * riders; livePictures(s) the pictures held in memory for s (Map, or null);
+ * openFinish(s, key, pics) photo-finish viewer; openRiders(s) riders sheet.
  */
 let ctx = null;
 export function initLists(c) {
@@ -34,6 +43,11 @@ export function initLists(c) {
       ctx.backToSettings();
     });
   }
+  els.reviewBack.addEventListener('click', () => { els.review.close(); openSessions(); });
+  els.reviewRidersBtn.addEventListener('click', () => { if (review) ctx.openRiders(review.s); });
+  els.reviewLeaders.addEventListener('click', () => { if (review?.s.riders) ctx.openRiders(review.s); });
+  els.reviewSend.addEventListener('click', () => { if (review) sendToPacemaker(review.s, els.reviewSend, els.reviewNote, () => renderReview()); });
+  els.review.addEventListener('close', () => { review = null; });
 }
 
 // Recordings list. Files are built before the buttons appear, so a tap can
@@ -200,7 +214,7 @@ function setNote(note, text, kind = '', link = null) {
   note.hidden = false;
 }
 
-async function sendToPacemaker(s, btn, note) {
+async function sendToPacemaker(s, btn, note, after = () => {}) {
   btn.disabled = true;
   setSendBtn(btn, 'busy', 'Sending…');
   setNote(note, SEND_NOTE_BUSY);
@@ -217,6 +231,7 @@ async function sendToPacemaker(s, btn, note) {
     setNote(note, SEND_FAILED, 'err');
   } finally {
     btn.disabled = false;
+    after();
   }
 }
 /** Back to "Send to Pacemaker" when a new session finishes. */
@@ -243,6 +258,9 @@ async function openSessions() {
     els.sessList.replaceChildren(warnP(`Could not open saved sessions (${e?.message || e}).`));
     return;
   }
+  // The session just timed is the same object the app holds (its riders may still be coming in).
+  const last = ctx.lastSession();
+  list = list.map((x) => (last && x.id === last.id ? last : x));
   list.sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt));
   els.sessList.replaceChildren(...(list.length ? list.map(renderTiming) : [emptyState('i-list-lg', 'No sessions yet', 'Every Start timing is kept here.')]));
 }
@@ -256,7 +274,9 @@ function renderTiming(s) {
   const pills = document.createElement('div');
   pills.className = 'pills';
   if (active) pills.append(pill('● Timing now', 'live'));
-  if (s.sentAt) pills.append(pill('✓ Sent', 'ok'));
+  if (s.sentAt) pills.append(changedSinceSent(s) ? pill('Changed since sent') : pill('✓ Sent', 'ok'));
+  const unsure = unsureLeaders(s.riders, [0, ...s.laps.map((l) => l.lap)]);
+  if (unsure) pills.append(pill(`${unsure} ${unsure === 1 ? 'rider' : 'riders'} to check`));
   if (s.plan) pills.append(pill('Plan'));
   if (pills.childElementCount) box.append(pills);
   if (!s.endedAt && !active) box.append(warnP('Stopped unexpectedly. The laps up to then are here.'));
@@ -265,6 +285,13 @@ function renderTiming(s) {
   const note = textP('', 'note');
   note.style.textAlign = 'left';
   note.hidden = true;
+  if (!active && s.laps.length) {
+    const rv = document.createElement('button');
+    rv.type = 'button'; rv.className = 'btn sm';
+    rv.textContent = 'Review laps, riders, photo-finish';
+    rv.addEventListener('click', () => { els.sessions.close(); openReview(s); });
+    row.append(rv);
+  }
   if (s.sent?.web) {
     const a = document.createElement('a');
     a.className = 'btn sm ghost'; a.href = s.sent.web; a.textContent = 'Open in Pacemaker';
@@ -272,7 +299,7 @@ function renderTiming(s) {
   }
   if (!active && s.laps.length) {
     const send = document.createElement('button');
-    send.type = 'button'; send.className = s.sentAt ? 'btn sm ghost' : 'btn sm send';
+    send.type = 'button'; send.className = s.sentAt && !changedSinceSent(s) ? 'btn sm ghost' : 'btn sm send';
     send.textContent = s.sentAt ? 'Send again' : 'Send to Pacemaker';
     send.addEventListener('click', () => sendToPacemaker(s, send, note));
     row.append(send);
@@ -290,6 +317,104 @@ function renderTiming(s) {
   if (row.childElementCount) box.append(row);
   box.append(note);
   return box;
+}
+
+const changedSinceSent = (s) => !!(s.sentAt && s.editedAt && s.editedAt > s.sentAt);
+
+// ---------- Settings > Sessions > Review ----------
+// One saved session in full: every lap with who led it (from the riders the
+// Android app recognised) and its photo-finish picture. Corrections in the
+// riders sheet go into the session, so Send to Pacemaker sends them.
+let review = null; // { s, pics: Map key -> picture }
+
+async function openReview(s) {
+  review = { s, pics: new Map() };
+  els.reviewSend.className = 'btn main full send';
+  els.reviewNote.className = 'note'; els.reviewNote.hidden = true;
+  renderReview();
+  if (!els.review.open) els.review.showModal();
+  let pics = new Map();
+  try { pics = await store.listFinishes(s.id); } catch { /* no pictures */ }
+  // Pictures still only in memory (the session just timed, storage full).
+  for (const [k, f] of ctx.livePictures(s) || []) if (!pics.has(k)) pics.set(k, f);
+  if (review?.s !== s) return;
+  review.pics = pics;
+  renderReview();
+}
+
+/** Redraws the review sheet when it shows session s (or any, without s). */
+export function refreshReview(s = null) {
+  if (review && els.review.open && (!s || review.s === s)) renderReview();
+}
+
+function renderReview() {
+  if (!review) return;
+  const { s, pics } = review;
+  const dec = ctx.decimals();
+  const keys = [0, ...s.laps.map((l) => l.lap)];
+  els.reviewSub.textContent = ` · ${new Date(s.startedAt ?? s.createdAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  const best = s.laps.length ? Math.min(...s.laps.map((l) => l.ms)) : null;
+  const avg = s.laps.length ? s.laps.reduce((n, l) => n + l.ms, 0) / s.laps.length : null;
+  els.reviewMeta.textContent = `${s.laps.length} ${s.laps.length === 1 ? 'lap' : 'laps'} · ${formatDuration(sessionDuration(s))}`
+    + `${best !== null ? ` · best ${formatLap(best, dec)} · average ${formatLap(avg, dec)}` : ''}${s.plan?.name ? ` · ${s.plan.name}` : ''}`;
+
+  // Riders: the leaders' pictures and the sheet that fixes them.
+  const waiting = ctx.ridersWaiting(s);
+  els.reviewRiders.hidden = !s.riders && !waiting;
+  const unsure = unsureLeaders(s.riders, keys);
+  els.reviewRidersBtn.disabled = !s.riders;
+  els.reviewRidersBtn.textContent = !s.riders ? 'Looking at the riders…' : unsure ? `Check riders (${unsure} ?)` : 'Riders';
+  els.reviewRidersBtn.classList.toggle('send', unsure > 0);
+  els.reviewLeaders.replaceChildren(...s.laps.map((l) => leaderOf(s, l.lap)).filter((x) => x && x.thumb).map((x) => {
+    const img = document.createElement('img');
+    img.src = x.thumb; img.alt = x.name;
+    if (!x.sure) img.className = 'unsure';
+    return img;
+  }));
+
+  const n = keys.filter((k) => pics.has(k)).length;
+  els.reviewHint.textContent = n ? `Tap a lap to see its photo-finish (${n} of ${keys.length} crossings have one).`
+    : 'No photo-finish pictures were saved with this session. Sessions timed from this version on keep them.';
+
+  els.reviewLaps.replaceChildren(...keys.map((k) => {
+    const lap = s.laps.find((l) => l.lap === k);
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `rv-lap${lap && lap.ms === best && s.laps.length > 1 ? ' best' : ''}`;
+    const num = document.createElement('span');
+    num.className = 'n'; num.textContent = k === 0 ? 'Start' : String(k);
+    const time = document.createElement('span');
+    time.className = 't'; time.textContent = lap ? formatLap(lap.ms, dec) : '';
+    const who = document.createElement('span');
+    who.className = 'who';
+    const lead = leaderOf(s, k);
+    if (lead) {
+      if (lead.thumb) who.append(picture(lead.thumb, ''));
+      const nm = document.createElement('span');
+      nm.textContent = lead.name;
+      who.append(nm);
+      if (!lead.sure) { who.classList.add('unsure'); const q = document.createElement('em'); q.textContent = '?'; who.append(q); }
+    }
+    const pf = document.createElement('span');
+    pf.className = `pf${pics.has(k) ? ' on' : ''}`;
+    pf.textContent = pics.has(k) ? 'Photo' : '';
+    b.append(num, time, who, pf);
+    b.setAttribute('aria-label', `${k === 0 ? 'Start' : `Lap ${k}, ${time.textContent}`}${lead ? `, first ${lead.name}${lead.sure ? '' : ' (unsure)'}` : ''}${pics.has(k) ? ', open photo-finish' : ''}`);
+    b.addEventListener('click', () => ctx.openFinish(s, k, pics));
+    li.append(b);
+    return li;
+  }));
+
+  // Send: the corrected riders go with it.
+  els.reviewSend.hidden = !s.laps.length;
+  const changed = changedSinceSent(s);
+  const btn = els.reviewSend;
+  if (btn.classList.contains('busy') || (btn.classList.contains('done') && !changed)) return;
+  btn.className = `btn main full${s.sentAt && !changed ? ' ghost' : ' send'}`;
+  btn.textContent = !s.sentAt ? 'Send to Pacemaker' : changed ? 'Send the changes to Pacemaker' : 'Send again';
+  if (changed) setNote(els.reviewNote, 'Riders changed since this was sent.');
+  else if (!els.reviewNote.classList.contains('err')) els.reviewNote.hidden = true;
 }
 
 export function formatDuration(ms) {

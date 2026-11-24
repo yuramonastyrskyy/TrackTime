@@ -341,8 +341,9 @@ export class RiderRun {
 
   /**
    * What a session keeps: the riders (names, pictures) and per crossing key
-   * the riders in crossing order (id, time, sure, picture). Features stay in
-   * the book.
+   * the riders in crossing order (id, time, sure, picture, and the features
+   * as Float32Arrays so a saved session can still be corrected and teach the
+   * book later; see correctSaved). The payload leaves the features out.
    */
   summary(keys) {
     const laps = {};
@@ -354,7 +355,7 @@ export class RiderRun {
       laps[k] = {
         leader: lead ? lead.rider : null,
         sure: lead ? !!lead.sure : true,
-        order: [...w.crossings].sort((a, b) => a.t - b.t).map((c) => ({ id: c.rider, t: Math.round(c.t - w.T), sure: !!c.sure, thumb: c.thumb || null })),
+        order: [...w.crossings].sort((a, b) => a.t - b.t).map((c) => ({ id: c.rider, t: Math.round(c.t - w.T), sure: !!c.sure, thumb: c.thumb || null, f: features(c) })),
       };
       for (const c of w.crossings) if (c.rider !== IGNORED) used.add(c.rider);
     }
@@ -365,6 +366,68 @@ export class RiderRun {
 
 /** Rider id for "not a team rider" (a passer-by, a coach). */
 export const IGNORED = 'x';
+
+function features(c) {
+  if (!c.col) return null;
+  return { col: Float32Array.from(c.col), emb: c.emb ? Float32Array.from(c.emb) : null };
+}
+
+/**
+ * Review of a session (session.riders, from RiderRun.summary): crossing i
+ * (in crossing order) of `key` is rider id, a new
+ * rider (null) or IGNORED. Fixes the order and the lap's leader in place, and
+ * teaches the book when the crossing kept its features (sessions saved before
+ * features were kept are still fixed, just not learnt from). Returns true when
+ * something changed.
+ */
+export function correctSaved(riders, book, key, i, id) {
+  const lap = riders?.laps?.[key];
+  const o = lap?.order[i];
+  if (!o) return false;
+  if (id === IGNORED) {
+    o.id = IGNORED;
+  } else {
+    let r;
+    if (id && !book.byId(id)) {
+      // A rider only this session still knows (Forget riders since): fix the session only.
+      r = riders.riders.find((x) => x.id === id) || { id, name: id, thumb: o.thumb || null };
+    } else if (o.f) {
+      r = book.correct({ col: Array.from(o.f.col), emb: o.f.emb ? Array.from(o.f.emb) : null, thumb: o.thumb }, id);
+    } else if (id) {
+      r = book.byId(id);
+    } else {
+      // New rider without features (saved before they were kept): an id the book never gives out again.
+      r = { id: `r${book.nextId++}`, name: `Rider ${riders.riders.length + 1}`, thumb: o.thumb || null };
+    }
+    o.id = r.id;
+    if (!riders.riders.some((x) => x.id === r.id)) riders.riders.push({ id: r.id, name: r.name, thumb: r.thumb || o.thumb || null });
+  }
+  o.sure = true;
+  const lead = lapLeader(lap.order.filter((q) => q.id !== IGNORED), 0, book.tuning);
+  lap.leader = lead ? lead.id : null;
+  lap.sure = lead ? !!lead.sure : true;
+  // Riders nobody is left on drop out of the session's list.
+  const used = new Set();
+  for (const l of Object.values(riders.laps)) for (const q of l.order) used.add(q.id);
+  riders.riders = riders.riders.filter((x) => used.has(x.id));
+  return true;
+}
+
+/** A new name for a rider, in the session and the book. */
+export function renameSaved(riders, book, id, name) {
+  const clean = String(name || '').trim().slice(0, 30);
+  if (!clean) return false;
+  book.rename(id, clean);
+  const r = riders?.riders.find((x) => x.id === id);
+  if (r) r.name = clean;
+  return !!r;
+}
+
+/** Laps (keys given) whose leader is still a guess. */
+export function unsureLeaders(riders, keys) {
+  if (!riders?.laps) return 0;
+  return keys.filter((k) => riders.laps[k]?.leader && !riders.laps[k].sure).length;
+}
 
 /** The book as plain data (rounded), to keep between sessions. */
 export function bookToJSON(book) {
