@@ -12,10 +12,10 @@ import { planFromHash, planToHash, planProgress, boardParts, bandTag, summarize 
 import {
   newSession, sessionStart, sessionLap, sessionUndo,
 } from './session.js';
-import { initLists, openRecordings, resetSendBtn, formatDuration } from './lists.js';
+import { initLists, openRecordings, resetSendBtn, formatDuration, refreshReview } from './lists.js';
 import { nativeApi, NativeCamera, exposureText, openInAppLink, RIDERS_MIN } from './nativeCamera.js';
 import { RiderRun, RiderBook, bookFromJSON, bookToJSON } from './riders.js';
-import { RidersView } from './ridersView.js';
+import { RidersView, leaderOf } from './ridersView.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -782,7 +782,7 @@ function renderSummary() {
     i.className = `h${b.h}${b.band ? ` b-${b.band}` : ''}`;
     return i;
   }));
-  ridersView.renderSummary(riderWaiting ? 'Looking at the riders…' : null);
+  ridersView.renderSummary(lastSession, riderWaiting ? 'Looking at the riders…' : null);
 }
 function setStat(el, value, unit) {
   el.textContent = value;
@@ -829,8 +829,9 @@ function onCrossing(t) {
 // ---------- photo-finish ----------
 // Each counted crossing gets a line-scan picture from 1 s before to 2 s after
 // it (js/photofinish.js). It is built once the frames after the crossing are
-// in, kept as a JPEG for this session, and saved with a recording. It is only
-// shown: lap times never change from it.
+// in, kept as a JPEG with the timing session (IndexedDB 'finishes', so
+// Settings > Sessions > Review can show it later) and with a recording. It is
+// only shown: lap times never change from it.
 function takeFinishes(t, force = false) {
   if (!finishPending.length || !stripBuf) return;
   const ready = finishPending.filter((p) => force || t >= p.at + PF.afterMs);
@@ -848,35 +849,54 @@ function buildFinish(p) {
   const gaps = frames.slice(1).map((f, i) => f - frames[i]).sort((a, b) => a - b);
   const frameMs = gaps.length ? gaps[gaps.length >> 1] : null;
   const rec = recorder;
+  const sid = session?.id; // Stop ends the session before the last pictures are encoded
   c.toBlob((blob) => {
     if (!blob) return;
     // Undo/Clear may have removed this crossing while the picture was encoded.
     const lapNow = p.key === 0 ? counter.startTime === p.at : counter.laps.some((l) => l.lap === p.key && l.at === p.at);
     if (!lapNow) return;
-    finishes.set(p.key, {
+    const f = {
       key: p.key, ms: p.ms, at: p.at, epoch: p.epoch, blob,
       width: pic.width, height: pic.height, t0: pic.t0 - p.at, stepMs: pic.stepMs,
       frames, frameMs, rowInner: strip?.rowInner ?? 0,
-    });
+    };
+    finishes.set(p.key, f);
+    if (sid) store.saveFinish(sid, p.key, f).catch(() => { /* storage full: still shown while the page is open */ });
     rec?.addFinish(p.key === 0 ? 'start' : `lap${String(p.key).padStart(3, '0')}`, blob);
     renderLaps();
-    if (els.finish.open && finishKey === p.key) openFinish(p.key);
+    if (els.finish.open && finishSrc === liveFinishes && finishKey === p.key) openFinish(p.key);
   }, 'image/jpeg', 0.9);
 }
 function dropFinish(key) {
   finishes.delete(key);
+  if (session) store.deleteFinish(session.id, key).catch(() => {});
   finishPending = finishPending.filter((p) => p.key !== key);
 }
 
+// What the viewer shows: this session's pictures (live), or a saved
+// session's from Settings > Sessions > Review.
+const liveFinishes = { pics: finishes, laps: () => counter.laps, session: () => (isActive() ? null : lastSession), saved: false };
+let finishSrc = liveFinishes;
 let finishKey = null;
 const finishView = new PhotoFinishViewer($('pfCanvas'), { onCursor: renderFinishReadout });
-function finishKeys() { return [...finishes.keys()].sort((a, b) => a - b); }
-async function openFinish(key) {
+function finishKeys() {
+  // Saved sessions step through every crossing (one without a picture says so).
+  const keys = finishSrc.saved ? [0, ...finishSrc.laps().map((l) => l.lap)] : [...finishSrc.pics.keys()];
+  return keys.sort((a, b) => a - b);
+}
+/** A saved session's picture of crossing `key` (pics: Map key -> picture). */
+function openSavedFinish(s, key, pics) {
+  finishSrc = { pics, laps: () => s.laps, session: () => s, saved: true };
+  openFinish(key, finishSrc);
+}
+async function openFinish(key, src = liveFinishes) {
+  finishSrc = src;
   finishKey = key;
-  const f = finishes.get(key);
-  const lap = counter.laps.find((l) => l.lap === key);
-  $('pfSub').textContent = key === 0 ? 'Start (first crossing)'
-    : `Lap ${key}${lap ? ` · ${formatLap(lap.ms, 2)}` : ''}`;
+  const f = src.pics.get(key);
+  const lap = src.laps().find((l) => l.lap === key);
+  const lead = leaderOf(src.session(), key);
+  $('pfSub').textContent = (key === 0 ? 'Start (first crossing)'
+    : `Lap ${key}${lap ? ` · ${formatLap(lap.ms, 2)}` : ''}`) + (lead ? ` · first ${lead.name}${lead.sure ? '' : ' ?'}` : '');
   const keys = finishKeys(), i = keys.indexOf(key);
   $('pfPrev').disabled = i <= 0 && !(i < 0 && keys.some((k) => k < key));
   $('pfNext').disabled = i < 0 ? !keys.some((k) => k > key) : i >= keys.length - 1;
@@ -885,9 +905,10 @@ async function openFinish(key) {
   $('pfTools').hidden = !f;
   if (!els.finish.open) els.finish.showModal();
   if (!f) {
-    const waiting = finishPending.some((p) => p.key === key);
+    const waiting = !src.saved && finishPending.some((p) => p.key === key);
     $('pfEmpty').textContent = waiting ? 'Building the picture… it is ready 2 s after the crossing.'
-      : 'No photo-finish for this crossing. Pictures are kept only while this page is open, from the moment timing started.';
+      : src.saved ? 'No photo-finish was saved for this crossing. Sessions timed before this version kept none.'
+        : 'No photo-finish for this crossing. Pictures are kept from the moment timing started.';
     $('pfRead').textContent = '';
     $('pfNote').textContent = '';
     finishView.clear();
@@ -897,7 +918,7 @@ async function openFinish(key) {
   try { bitmap = await createImageBitmap(f.blob); } catch {
     bitmap = await new Promise((res) => { const im = new Image(); im.onload = () => res(im); im.src = URL.createObjectURL(f.blob); });
   }
-  if (finishKey !== key) return;
+  if (finishKey !== key || finishSrc !== src) return;
   finishView.show({ ...f, bitmap });
   const fps = f.frameMs ? Math.round(1000 / f.frameMs) : null;
   $('pfNote').textContent = `${fps ? `${fps} fps: one frame every ${Math.round(f.frameMs)} ms. ` : ''}`
@@ -905,11 +926,11 @@ async function openFinish(key) {
     + 'Between frames the picture blends the two nearest frames. Moving the cursor never changes the lap time.';
 }
 function renderFinishReadout(ms) {
-  const f = finishes.get(finishKey);
+  const f = finishSrc.pics.get(finishKey);
   if (!f) { $('pfRead').textContent = ''; return; }
   const sign = ms === 0 ? '±' : ms > 0 ? '+' : '−';
   const off = `${sign}${(Math.abs(ms) / 1000).toFixed(3)} s`;
-  const lap = counter.laps.find((l) => l.lap === finishKey);
+  const lap = finishSrc.laps().find((l) => l.lap === finishKey);
   const b = document.createElement('b'); b.textContent = off;
   const parts = [b, document.createTextNode(' from the timed crossing')];
   if (lap && Math.abs(ms) >= 1) {
@@ -922,7 +943,7 @@ function stepFinish(d) {
   if (!keys.length) return;
   const i = keys.indexOf(finishKey);
   const next = i >= 0 ? keys[i + d] : (d > 0 ? keys.find((k) => k > finishKey) : [...keys].reverse().find((k) => k < finishKey));
-  if (next !== undefined) openFinish(next);
+  if (next !== undefined) openFinish(next, finishSrc);
 }
 $('pfPrev').addEventListener('click', () => stepFinish(-1));
 $('pfNext').addEventListener('click', () => stepFinish(1));
@@ -1487,14 +1508,16 @@ function stopRiders() {
     riderRun.finishAll();
     riderWaiting = false;
     attachRiders(s);
-    if (!els.summary.hidden) ridersView.renderSummary();
-    if (els.riders.open) ridersView.render();
+    riderRun = null; // from here on corrections go to s.riders (js/riders.js correctSaved)
+    if (!els.summary.hidden) ridersView.renderSummary(lastSession);
+    if (els.riders.open && ridersView.session === s) ridersView.render();
+    refreshReview(s);
   };
   step();
 }
 
 /** The last session's riders, from the run: into the session (saved) and the book (kept). */
-function attachRiders(s = lastSession) {
+function attachRiders(s) {
   if (!riderRun || !s) return;
   s.riders = riderRun.summary([0, ...s.laps.map((l) => l.lap)]);
   persistSession(s);
@@ -1502,8 +1525,15 @@ function attachRiders(s = lastSession) {
 }
 
 const ridersView = new RidersView({
-  get: () => ({ run: riderRun, session: lastSession, decimals: settings.decimals }),
-  changed: () => { attachRiders(); ridersView.renderSummary(); },
+  book: () => riderBook,
+  decimals: () => settings.decimals,
+  changed: (s) => {
+    s.editedAt = Date.now(); // a sent session says it changed since
+    persistSession(s);
+    saveRiderBook();
+    if (s === lastSession && !els.summary.hidden) ridersView.renderSummary(lastSession, riderWaiting ? 'Looking at the riders…' : null);
+  },
+  closed: (s) => refreshReview(s),
 });
 
 function fillRidersSettings() {
@@ -1669,6 +1699,11 @@ initLists({
   forgetLastSession: (id) => {
     if (lastSession?.id === id) { lastSession = null; els.sendBtn.hidden = true; els.sendNote.hidden = true; }
   },
+  decimals: () => settings.decimals,
+  ridersWaiting: (s) => riderWaiting && s === lastSession,
+  livePictures: (s) => (s === lastSession && !session && finishes.size ? finishes : null),
+  openFinish: openSavedFinish,
+  openRiders: (s) => ridersView.open(s),
   backToSettings: () => {
     fillSettings();
     fillTiles();

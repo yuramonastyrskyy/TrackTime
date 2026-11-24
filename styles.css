@@ -550,3 +550,19 @@ html.native-cam .tt video { display: none; }
 
 /* ---------- UI size (see --tt-ui-scale) ---------- */
 .tt .intro, .tt .hud, .tt .toast, .tt .panel, .tt dialog.sheet { zoom: var(--tt-ui-scale); }
+
+/* ---------- Settings > Sessions > Review ---------- */
+.tt .rv-laps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tt .rv-lap { width: 100%; min-height: 48px; display: grid; grid-template-columns: 52px 72px minmax(0, 1fr) 58px; align-items: center; gap: 8px; padding: 6px 4px; background: none; border: 0; border-top: 1px solid var(--tt-border); color: var(--tt-text); font: 16px var(--tt-font); text-align: left; cursor: pointer; }
+.tt .rv-lap .n { font-size: 14px; color: var(--tt-text-2); font-weight: 700; }
+.tt .rv-lap .t { font-weight: 800; font-variant-numeric: tabular-nums; }
+.tt .rv-lap.best .t { color: var(--tt-good); }
+.tt .rv-lap .who { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 14px; }
+.tt .rv-lap .who img { height: 36px; max-width: 36px; object-fit: cover; border-radius: 5px; border: 2px solid var(--tt-good); }
+.tt .rv-lap .who.unsure img { border-color: var(--tt-amber); border-style: dashed; }
+.tt .rv-lap .who > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt .rv-lap .who em { font-style: normal; font-weight: 800; color: var(--tt-on-light); background: var(--tt-amber); border-radius: 50%; width: 18px; height: 18px; line-height: 18px; text-align: center; flex: none; font-size: 12px; }
+.tt .rv-lap .pf { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--tt-text-2); text-align: right; }
+.tt .rv-lap .pf.on { color: var(--tt-amber); }
+.tt .rv-lap .pf.on::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--tt-amber); margin-right: 5px; vertical-align: middle; }
+.tt #reviewRidersBtn.send { background: var(--tt-amber); color: var(--tt-on-light); }

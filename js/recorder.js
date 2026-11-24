@@ -8,7 +8,7 @@
 // what was recorded so far is still there under Settings -> Recordings.
 
 const DB_NAME = 'tracktime-rec';
-const DB_VERSION = 2; // 2: timing sessions ('timings')
+const DB_VERSION = 3; // 2: timing sessions ('timings'); 3: their photo-finish pictures ('finishes')
 
 export const REC_DEFAULTS = {
   partMinutes: 10,
@@ -87,6 +87,8 @@ function openDb() {
       if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('chunks')) db.createObjectStore('chunks');
       if (!db.objectStoreNames.contains('timings')) db.createObjectStore('timings', { keyPath: 'id' });
+      // Photo-finish pictures of a timing session, key [session id, crossing key (0 = start, n = lap n)].
+      if (!db.objectStoreNames.contains('finishes')) db.createObjectStore('finishes');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -105,6 +107,7 @@ function tx(store, mode, fn) {
     t.onabort = () => reject(t.error || new Error('aborted'));
   }));
 }
+const finishRange = (sid) => IDBKeyRange.bound([sid, 0], [sid, Number.MAX_SAFE_INTEGER]);
 const reqP = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 
 export const store = {
@@ -117,7 +120,20 @@ export const store = {
   // Timing sessions (laps of every Start timing / Record + time run).
   saveTiming: (session) => tx('timings', 'readwrite', (s) => { s.put(session); }),
   listTimings: () => tx('timings', 'readonly', (s) => reqP(s.getAll())),
-  deleteTiming: (id) => tx('timings', 'readwrite', (s) => { s.delete(id); }),
+  /** Deletes a timing session and its photo-finish pictures. */
+  deleteTiming: (id) => openDb().then((db) => new Promise((resolve, reject) => {
+    const t = db.transaction(['timings', 'finishes'], 'readwrite');
+    t.objectStore('timings').delete(id);
+    t.objectStore('finishes').delete(finishRange(id));
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+  })),
+  // Photo-finish pictures of a timing session: { blob, width, height, t0, stepMs, frames, frameMs, rowInner, ... }.
+  saveFinish: (sid, key, pic) => tx('finishes', 'readwrite', (s) => { s.put(pic, [sid, key]); }),
+  deleteFinish: (sid, key) => tx('finishes', 'readwrite', (s) => { s.delete([sid, key]); }),
+  /** Map crossing key -> picture, for one session. */
+  listFinishes: (sid) => tx('finishes', 'readonly', (s) => Promise.all([reqP(s.getAllKeys(finishRange(sid))), reqP(s.getAll(finishRange(sid)))]))
+    .then(([keys, vals]) => new Map(keys.map((k, i) => [k[1], vals[i]]))),
   deleteSession: (id) => openDb().then((db) => new Promise((resolve, reject) => {
     const t = db.transaction(['sessions', 'chunks'], 'readwrite');
     t.objectStore('sessions').delete(id);
