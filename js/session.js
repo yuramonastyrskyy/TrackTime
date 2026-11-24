@@ -2,6 +2,7 @@
 // the payload sent to Pacemaker. No browser APIs, so it is tested in Node.
 
 import { DEFAULT_API, cleanApi } from './plan.js';
+import { ridersPayload } from './riders.js';
 
 export const APP_VERSION = '2026-11-17';
 
@@ -17,6 +18,7 @@ export function newSession({ now = Date.now(), plan = null, settings = {} } = {}
     settings,
     sentAt: null,
     sent: null,              // Pacemaker's answer
+    riders: null,            // Android app: who crossed (RiderRun.summary(): riders + per crossing key 0 = start, n = lap n)
   };
 }
 
@@ -56,6 +58,20 @@ export function sessionPayload(session, { offsetMin } = {}) {
   if (session.plan?.id) body.plan = session.plan.id;
   body.startedAt = isoLocal(start, offsetMin);
   body.laps = session.laps.map((l) => ({ lap: l.lap, ms: l.ms, at: l.at }));
+  // Who crossed first at the end of each lap (and at the start), when the
+  // app recognised the riders. Optional fields: older readers ignore them.
+  const rp = ridersPayload(session.riders, [0, ...session.laps.map((l) => l.lap)]);
+  if (rp && rp.riders.length) {
+    body.riders = rp.riders; // [{ id, name, led }]
+    for (const l of body.laps) {
+      const x = rp.laps[l.lap];
+      if (!x) continue;
+      l.leader = x.leader;          // rider id, or null
+      l.leaderSure = x.sure;        // false: the app was unsure and nobody checked
+      l.order = x.order;            // rider ids in crossing order
+    }
+    if (rp.laps[0]) body.startLeader = rp.laps[0].leader;
+  }
   body.ignoreSec = session.settings?.ignoreSec ?? 14;
   body.app = `TrackTime ${APP_VERSION}`;
   return body;

@@ -12,7 +12,7 @@ Static web app (no build step) on GitHub Pages: velodrome lap timing from the ph
 - Bump `?v=N` on both `styles.css` and `js/app.js` in index.html, and `VERSION` in sw.js.
 - A new file the app loads goes into sw.js `SHELL`, or it won't work offline.
 - Storage keys keep the `'tracktime.` / `'tracktime-rec'` / `'tracktime-v` prefixes: build-pages.sh rewrites them for the preview copy.
-- `js/detector.js`, `js/plan.js`, `js/session.js` use no browser APIs (tested in Node). Keep it that way.
+- `js/detector.js`, `js/plan.js`, `js/session.js`, `js/riders.js` use no browser APIs (tested in Node). Keep it that way.
 
 ## Where things live (read the part you need; app.js is ~50 KB, grep `// ----------` for its sections)
 - `js/app.js`: wiring: state, camera, frame loop, timing, laps, overlay/markers, settings dialog, record mode.
@@ -21,5 +21,6 @@ Static web app (no build step) on GitHub Pages: velodrome lap timing from the ph
 - `js/recorder.js` Record + time (video parts, IndexedDB, log/CSV) and session storage
 - `js/plan.js` Pacemaker plans · `js/session.js` sessions + sending · `js/lapLink.js` link to the laptop stopwatch
 - `styles.css` (~34 KB, tokens at the top; `--tt-ui-scale` sets UI size) · `index.html` markup + SVG icon sprite
+- `js/riders.js` rider identification (crossings, matching, review data; Node-tested) · `js/ridersView.js` leaders under the summary + review sheet. App side: `RiderEngine.java`/`RiderVision.java` (plain Java + ONNX Runtime, models in `android/app/src/main/assets/riders/`); `android/tools/RiderReplay.java` replays a clip through them on a desktop.
 - `js/nativeCamera.js` the Android app's camera (window.TrackTimeNative) · `android/` Capacitor shell; native camera in `TrackCameraPlugin.java`. Gradle builds only in GitHub Actions (`android.yml`; Google's Maven is blocked in Claude's cloud container). Bump `TrackCameraPlugin.VERSION` + `NATIVE_MIN` when the interface changes.
 - `audio/en/*.m4a`: voice clips, binary; never read them.
