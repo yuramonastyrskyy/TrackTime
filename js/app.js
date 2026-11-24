@@ -1270,7 +1270,7 @@ function fillSettings() {
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
   fillRidersSettings();
-  $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
+  if (!native) $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 }
 els.settingsBtn.addEventListener('click', () => {
   fillSettings();
@@ -1398,7 +1398,9 @@ function setupNative() {
   window.__ttNativeIntent = take;
   take();
   els.nativeGroup.hidden = false;
-  els.fps60.closest('section').hidden = true; // the browser camera's 60 fps switch
+  // Photo-finish: the app camera is always 60 fps, so only say how to see it.
+  els.fps60.closest('label').hidden = true;
+  $('camInfo').textContent = 'Always on in the app: tap a lap time (or the big last lap) to see the picture of that crossing.';
 }
 // In Chrome on Android, with a plan: a button that hands the plan to the app.
 function renderOpenInApp() {
