@@ -1348,6 +1348,8 @@ els.stopwatchCode.addEventListener('change', () => {
 });
 els.boardBtn.addEventListener('click', async () => {
   if (board.state !== 'off') { board.disconnect(); return; }
+  els.boardStatus.hidden = false;
+  els.boardStatusText.textContent = 'Opening the Bluetooth list…';
   if (!boardSupported()) {
     els.boardStatus.hidden = false;
     els.boardStatusText.textContent = native
@@ -1359,9 +1361,11 @@ els.boardBtn.addEventListener('click', async () => {
     await board.connect();
     board.brightness(settings.boardBrightness ?? 60);
   } catch (e) {
-    if (e?.name === 'NotFoundError') return; // picker closed
+    if (e?.name === 'NotFoundError' && /cancel/i.test(e.message || '')) return; // picker closed
     els.boardStatus.hidden = false;
-    els.boardStatusText.textContent = `Could not connect: ${e?.message || e}`;
+    els.boardStatusText.textContent = /adapter|not available|disabled/i.test(e?.message || '')
+      ? 'Bluetooth is off or not allowed. Turn on Bluetooth (and Location on Android), give Chrome the Nearby devices permission, then try again.'
+      : `Could not connect: ${e?.name || ''} ${e?.message || e}`;
   }
 });
 els.boardBright.addEventListener('change', () => {
