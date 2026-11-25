@@ -115,6 +115,7 @@ void setup() {
                                   4, 15, CLK_PIN};           // LAT OE CLK
   HUB75_I2S_CFG cfg(64, 32, 1, pins);
   cfg.clkphase = false;
+  cfg.driver = HUB75_I2S_CFG::FM6124;   // the panel's driver chips (labelled on the back)
   panel = new MatrixPanel_I2S_DMA(cfg);
   panel->begin();
   panel->setBrightness8(DEFAULT_BRIGHTNESS);
