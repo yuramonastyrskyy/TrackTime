@@ -1,16 +1,18 @@
 // TrackTime time board: shows the lap time TrackTime sends over Bluetooth LE.
 //
-// Board: "ESP32 Dev Module". Libraries: "ESP32 HUB75 LED MATRIX PANEL DMA Display"
+// Board: "ESP32 Dev Module", Tools > Partition Scheme > "Huge APP (3MB No OTA)". Libraries: "ESP32 HUB75 LED MATRIX PANEL DMA Display"
 // (mrcodetastic) + Adafruit GFX. Bluetooth comes with the ESP32 board package.
 //
 // TrackTime (Settings > Time board > Connect) writes plain text to one
 // characteristic: the time to show, e.g. "23.8", "1:02.3" or "--".
 // A message starting with "!B" sets the brightness instead, e.g. "!B80" (0-255).
+// Optional colour in front, letter + '|': "g|23.8" green (on target),
+// "o|24.6" orange (slow), "r|25.4" red (too slow), "p|22.9" purple (fast),
+// "w|..." white. No prefix: amber.
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
-#include <BLE2902.h>
 
 // ---- wiring (same as the tests) ----
 const int CLK_PIN = 16;  // RX2  (33 if you wired D33)
@@ -21,10 +23,26 @@ const int D_PIN   = 17;  // TX2  (32 if you wired D32)
 #define SERVICE_UUID "7a1e0001-5c2b-4d8e-9f00-7472616b7469"
 #define TEXT_UUID    "7a1e0002-5c2b-4d8e-9f00-7472616b7469"
 
+// Demo: while TrackTime isn't connected, cycle through sample lap times in
+// every colour (2 s each). Set to false once you've seen it.
+const bool DEMO = true;
+const char *DEMO_LAPS[] = {"g|23.8", "o|24.6", "p|22.9", "r|25.7", "g|18.4", "o|1:02.3", "p|9.9", "--"};
+
 const uint8_t DEFAULT_BRIGHTNESS = 60;   // keeps the panel well under 2 A
 
 MatrixPanel_I2S_DMA *panel = nullptr;
 uint16_t digitColor;
+
+uint16_t colorFor(char c) {
+  switch (c) {
+    case 'g': return panel->color565(0, 255, 0);      // on target
+    case 'o': return panel->color565(255, 90, 0);     // slow
+    case 'r': return panel->color565(255, 0, 0);      // too slow
+    case 'p': return panel->color565(150, 0, 255);    // fast
+    case 'w': return panel->color565(255, 255, 255);
+    default:  return panel->color565(255, 150, 0);    // amber
+  }
+}
 
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 char pending[16] = "--";
@@ -57,6 +75,8 @@ void drawDigit(int x, uint8_t bits, int w, int t) {
 
 void drawTime(const char *s) {
   panel->fillScreen(0);
+  digitColor = colorFor(0);
+  if (s[0] && s[1] == '|') { digitColor = colorFor(s[0]); s += 2; }
   // Pick the widest digits that fit the 64 px width (16 px max).
   int w = 16, t = 4, total = 0;
   for (; w >= 6; w--) {
@@ -119,7 +139,6 @@ void setup() {
   panel = new MatrixPanel_I2S_DMA(cfg);
   panel->begin();
   panel->setBrightness8(DEFAULT_BRIGHTNESS);
-  digitColor = panel->color565(255, 150, 0);   // amber
 
   BLEDevice::init(BOARD_NAME);
   BLEServer *server = BLEDevice::createServer();
@@ -137,6 +156,16 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t lastDemo = 0;
+  static int demoIx = 0;
+  if (DEMO && !connected && millis() - lastDemo > 2000) {
+    lastDemo = millis();
+    portENTER_CRITICAL(&mux);
+    strncpy(pending, DEMO_LAPS[demoIx], sizeof(pending) - 1);
+    dirty = true;
+    portEXIT_CRITICAL(&mux);
+    demoIx = (demoIx + 1) % (sizeof(DEMO_LAPS) / sizeof(DEMO_LAPS[0]));
+  }
   if (dirty) {
     char s[16];
     portENTER_CRITICAL(&mux);

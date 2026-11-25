@@ -161,7 +161,16 @@ function renderLink(s) {
 }
 // ---------- LED time board (Bluetooth) ----------
 const board = new LapBoard({ onState: renderBoard });
-const boardText = (ms) => formatLap(ms, 1);
+// With a Pacemaker plan the time takes the lap's band colour: "g|23.8".
+const BOARD_BAND = { good: 'g', slow: 'o', veryslow: 'r', fast: 'p' };
+function boardShowLast() {
+  const laps = counter.laps;
+  const last = laps[laps.length - 1];
+  if (!last) { board.show('--'); return; }
+  const r = currentProgress()?.results?.[laps.length - 1];
+  const c = r && !r.break ? BOARD_BAND[r.band] : null;
+  board.show(`${c ? `${c}|` : ''}${formatLap(last.ms, 1)}`);
+}
 function renderBoard(s) {
   if (!els.boardBtn) return;
   els.boardBtn.textContent = s.state === 'off' ? 'Connect time board' : 'Disconnect time board';
@@ -827,7 +836,7 @@ function onCrossing(t) {
   if (r.type === 'start' || r.type === 'lap') {
     const at = frameEpoch(t);
     lapLink.sendCrossing(at, r.type === 'start' ? 0 : r.lap);
-    board.show(r.type === 'start' ? '--' : boardText(r.ms));
+    if (r.type === 'start') board.show('--'); else boardShowLast();
     if (session) {
       if (r.type === 'start') sessionStart(session, at); else sessionLap(session, r.lap, r.ms, at);
       persistSession();
@@ -1019,8 +1028,7 @@ els.undoBtn.addEventListener('click', () => {
   renderPlan();
   recorder?.log('undo', { lap: undone?.lap, detail: undone ? 'lap' : 'start' });
   if (counter.startTime === null && (state === 'timing')) setState('armed');
-  const prev = counter.laps[counter.laps.length - 1];
-  board.show(prev ? boardText(prev.ms) : '--');
+  boardShowLast();
   renderLaps();
   if (!els.summary.hidden) renderSummary();
 });
