@@ -8,6 +8,7 @@ import { buildStripLine, unionBox, readStripRGBA, StripBuffer, PF } from './phot
 import { PhotoFinishViewer } from './finishView.js';
 import { SessionRecorder, store, formatBytes } from './recorder.js';
 import { LapSender, linkOverrides, normalizeCode } from './lapLink.js';
+import { LapBoard, boardSupported } from './board.js';
 import { planFromHash, planToHash, planProgress, boardParts, bandTag, summarize } from './plan.js';
 import {
   newSession, sessionStart, sessionLap, sessionUndo,
@@ -31,6 +32,7 @@ const els = {
   copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'), highContrast: $('highContrast'),
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkStatusText: $('linkStatusText'), linkPill: $('linkPill'),
+  boardBtn: $('boardBtn'), boardStatus: $('boardStatus'), boardStatusText: $('boardStatusText'), boardBright: $('boardBright'),
   restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), finish: $('finish'),
   planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planMain: $('planMain'),
   planSwatch: $('planSwatch'), planWhere: $('planWhere'), planTarget: $('planTarget'), planLeft: $('planLeft'),
@@ -157,6 +159,21 @@ function renderLink(s) {
   }
   els.linkStatusText.textContent = text;
 }
+// ---------- LED time board (Bluetooth) ----------
+const board = new LapBoard({ onState: renderBoard });
+const boardText = (ms) => formatLap(ms, 1);
+function renderBoard(s) {
+  if (!els.boardBtn) return;
+  els.boardBtn.textContent = s.state === 'off' ? 'Connect time board' : 'Disconnect time board';
+  els.boardStatus.hidden = s.state === 'off' && !s.detail;
+  els.boardStatus.classList.toggle('ok', s.state === 'on');
+  const name = s.name || 'board';
+  els.boardStatusText.textContent = s.state === 'on' ? `Connected to ${name}. Showing ${s.text}.`
+    : s.state === 'connecting' ? `Connecting to ${name}…`
+    : s.state === 'lost' ? `Lost ${name}. ${s.detail || 'Reconnecting…'}`
+    : s.detail || '';
+}
+if (boardSupported()) board.restore().then((ok) => { if (ok) board.brightness(settings.boardBrightness ?? 60); });
 /** Wall-clock time (epoch ms) of a frame time from the detector clock. */
 function frameEpoch(t) {
   if (timeSource === 'native') return ncam.epochOffset + t; // sensor clock + its offset
@@ -724,6 +741,7 @@ function startTiming() {
   announcer.unlock(); // inside the tap, so phones allow sound
   counter.ignoreMs = settings.ignoreSec * 1000;
   counter.reset();
+  board.show('--');
   finishes.clear();
   finishSession();
   session = newSession({ plan, settings: sessionSettings() });
@@ -809,6 +827,7 @@ function onCrossing(t) {
   if (r.type === 'start' || r.type === 'lap') {
     const at = frameEpoch(t);
     lapLink.sendCrossing(at, r.type === 'start' ? 0 : r.lap);
+    board.show(r.type === 'start' ? '--' : boardText(r.ms));
     if (session) {
       if (r.type === 'start') sessionStart(session, at); else sessionLap(session, r.lap, r.ms, at);
       persistSession();
@@ -1000,6 +1019,8 @@ els.undoBtn.addEventListener('click', () => {
   renderPlan();
   recorder?.log('undo', { lap: undone?.lap, detail: undone ? 'lap' : 'start' });
   if (counter.startTime === null && (state === 'timing')) setState('armed');
+  const prev = counter.laps[counter.laps.length - 1];
+  board.show(prev ? boardText(prev.ms) : '--');
   renderLaps();
   if (!els.summary.hidden) renderSummary();
 });
@@ -1287,6 +1308,8 @@ function fillSettings() {
   els.recordSound.checked = !!settings.recordSound;
   els.countSingles.checked = !!settings.countSingles;
   els.stopwatchCode.value = settings.stopwatchCode;
+  els.boardBright.value = settings.boardBrightness ?? 60;
+  renderBoard({ state: board.state, name: board.device?.name || '', detail: '', text: board.last });
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
@@ -1313,6 +1336,29 @@ els.stopwatchCode.addEventListener('change', () => {
   settings.stopwatchCode = normalizeCode(els.stopwatchCode.value);
   els.stopwatchCode.value = settings.stopwatchCode;
   lapLink.setCode(settings.stopwatchCode);
+  save();
+});
+els.boardBtn.addEventListener('click', async () => {
+  if (board.state !== 'off') { board.disconnect(); return; }
+  if (!boardSupported()) {
+    els.boardStatus.hidden = false;
+    els.boardStatusText.textContent = native
+      ? 'Bluetooth to the board works in the browser version (Chrome or Brave), not in this app yet.'
+      : 'No Bluetooth in this browser. Use Chrome on Android, or in Brave turn on brave://flags/#brave-web-bluetooth-api.';
+    return;
+  }
+  try {
+    await board.connect();
+    board.brightness(settings.boardBrightness ?? 60);
+  } catch (e) {
+    if (e?.name === 'NotFoundError') return; // picker closed
+    els.boardStatus.hidden = false;
+    els.boardStatusText.textContent = `Could not connect: ${e?.message || e}`;
+  }
+});
+els.boardBright.addEventListener('change', () => {
+  settings.boardBrightness = Math.min(255, Math.max(10, Math.round(Number(els.boardBright.value)) || 60));
+  board.brightness(settings.boardBrightness);
   save();
 });
 // Number stepper: −/+ around the same number field.
@@ -1365,6 +1411,7 @@ els.clearBtn.addEventListener('click', () => {
   resetClear();
   recorder?.log('clear');
   counter.reset();
+  board.show('--');
   finishes.clear(); finishPending = [];
   // Laps timed so far stay in Settings > Sessions; timing carries on as a new session.
   if (session) { finishSession(); session = newSession({ plan, settings: sessionSettings() }); }

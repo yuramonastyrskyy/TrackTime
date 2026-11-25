@@ -52,6 +52,15 @@ Pacemaker (the coach's training app) holds track session plans and checks the la
 - **Send to Pacemaker.** After **Stop**, and from Sessions. Nothing is ever sent without that tap, and there are no keys or logins: Pacemaker asks the person to check and save the ride. It POSTs the laps as JSON (`Content-Type: text/plain`, so the browser sends no CORS preflight) to `<api>/api/rides?action=track`, where `<api>` is the plan's `api` or, without a plan, `https://pacemaker-theta.vercel.app` (`DEFAULT_API` in `js/plan.js`). Pacemaker's answer opens in Telegram when TrackTime runs inside Telegram, otherwise in the same tab. Without signal the session stays saved; try again later.
 - For testing, `?pmapi=http://localhost:8787` sends to another address. `test/session.test.mjs` sends to a small local stub server.
 
+## LED time board
+
+A battery LED board at the finish line can show each lap time (for example `23.8`): a 64x32 P5 HUB75 panel driven by an ESP32, powered from a power bank.
+
+1. Load `board/time_board/time_board.ino` onto the ESP32 with Arduino IDE (board "ESP32 Dev Module"; libraries "ESP32 HUB75 LED MATRIX PANEL DMA Display" and "Adafruit GFX Library"). `board/pin_test/` checks the wiring pin by pin.
+2. In TrackTime: Settings > Time board > **Connect time board**, and pick "TrackTime Board". Each lap, undo and clear then updates the board; it reconnects by itself if the link drops.
+
+Bluetooth from a web page needs Chrome (or Brave with Web Bluetooth turned on) on Android or a Mac; iPhones and the Android app can't do it yet.
+
 ## Android app
 
 The Android app (`android/`, a [Capacitor](https://capacitorjs.com) shell) opens the same live site, so every merge reaches it without a new APK, and it keeps working offline like the website. What it adds is its own camera:

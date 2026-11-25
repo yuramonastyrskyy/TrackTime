@@ -22,5 +22,6 @@ Static web app (no build step) on GitHub Pages: velodrome lap timing from the ph
 - `js/plan.js` Pacemaker plans · `js/session.js` sessions + sending · `js/lapLink.js` link to the laptop stopwatch
 - `styles.css` (~34 KB, tokens at the top; `--tt-ui-scale` sets UI size) · `index.html` markup + SVG icon sprite
 - `js/riders.js` rider identification (crossings, matching, review data; Node-tested) · `js/ridersView.js` leaders under the summary + review sheet. App side: `RiderEngine.java`/`RiderVision.java` (plain Java + ONNX Runtime, models in `android/app/src/main/assets/riders/`); `android/tools/RiderReplay.java` replays a clip through them on a desktop.
+- `js/board.js` LED time board over Web Bluetooth (service 7a1e0001-…) · `board/time_board/time_board.ino` its ESP32 firmware (HUB75 64x32 panel, Arduino IDE), `board/pin_test/` wiring check. Keep the UUIDs in both in step.
 - `js/nativeCamera.js` the Android app's camera (window.TrackTimeNative) · `android/` Capacitor shell; native camera in `TrackCameraPlugin.java`. Gradle builds only in GitHub Actions (`android.yml`; Google's Maven is blocked in Claude's cloud container). Bump `TrackCameraPlugin.VERSION` + `NATIVE_MIN` when the interface changes.
 - `audio/en/*.m4a`: voice clips, binary; never read them.
