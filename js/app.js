@@ -8,6 +8,7 @@ import { buildStripLine, unionBox, readStripRGBA, StripBuffer, PF } from './phot
 import { PhotoFinishViewer } from './finishView.js';
 import { SessionRecorder, store, formatBytes } from './recorder.js';
 import { LapSender, linkOverrides, normalizeCode } from './lapLink.js';
+import { LapBoard, boardSupported } from './board.js';
 import { planFromHash, planToHash, planProgress, boardParts, bandTag, summarize } from './plan.js';
 import {
   newSession, sessionStart, sessionLap, sessionUndo,
@@ -31,6 +32,7 @@ const els = {
   copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'), highContrast: $('highContrast'),
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkStatusText: $('linkStatusText'), linkPill: $('linkPill'),
+  boardBtn: $('boardBtn'), boardStatus: $('boardStatus'), boardStatusText: $('boardStatusText'), boardBright: $('boardBright'),
   restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), finish: $('finish'),
   planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planMain: $('planMain'),
   planSwatch: $('planSwatch'), planWhere: $('planWhere'), planTarget: $('planTarget'), planLeft: $('planLeft'),
@@ -157,6 +159,38 @@ function renderLink(s) {
   }
   els.linkStatusText.textContent = text;
 }
+// ---------- LED time board (Bluetooth) ----------
+const board = new LapBoard({ onState: renderBoard });
+// Message: colour|time|line, e.g. "g|23.8|b". With a Pacemaker plan the time
+// takes the lap's band colour (else 'a', amber) and a bar on the right shows
+// where the current block rides: red (below red / corridor), blue, yellow (above blue).
+const BOARD_BAND = { good: 'g', slow: 'o', veryslow: 'r', fast: 'p' };
+const BOARD_LINE = { red: 'r', corridor: 'r', blue: 'b', above: 'y' };
+function boardLine() {
+  const p = plan ? currentProgress() : null;
+  if (!p || p.done || !p.block || p.block.kind !== 'ride') return '';
+  return BOARD_LINE[p.block.where] || '';
+}
+function boardShowLast() {
+  const laps = counter.laps;
+  const last = laps[laps.length - 1];
+  const r = last ? currentProgress()?.results?.[laps.length - 1] : null;
+  const c = (r && !r.break ? BOARD_BAND[r.band] : null) || 'a';
+  const line = boardLine();
+  board.show(`${c}|${last ? formatLap(last.ms, 1) : '--'}${line ? `|${line}` : ''}`);
+}
+function renderBoard(s) {
+  if (!els.boardBtn) return;
+  els.boardBtn.textContent = s.state === 'off' ? 'Connect time board' : 'Disconnect time board';
+  els.boardStatus.hidden = s.state === 'off' && !s.detail;
+  els.boardStatus.classList.toggle('ok', s.state === 'on');
+  const name = s.name || 'board';
+  els.boardStatusText.textContent = s.state === 'on' ? `Connected to ${name}. Showing ${s.text}.`
+    : s.state === 'connecting' ? `Connecting to ${name}…`
+    : s.state === 'lost' ? `Lost ${name}. ${s.detail || 'Reconnecting…'}`
+    : s.detail || '';
+}
+if (boardSupported()) board.restore().then((ok) => { if (ok) board.brightness(settings.boardBrightness ?? 60); });
 /** Wall-clock time (epoch ms) of a frame time from the detector clock. */
 function frameEpoch(t) {
   if (timeSource === 'native') return ncam.epochOffset + t; // sensor clock + its offset
@@ -223,6 +257,7 @@ function currentProgress() {
 // only text and a few classes change, never the layout around it.
 function renderPlan() {
   els.planStrip.hidden = !planShown();
+  boardShowLast(); // the block (and its line) may have changed
   if (!plan) return;
   const t = boardParts(plan, currentProgress());
   setText(els.planName, plan.name);
@@ -724,6 +759,7 @@ function startTiming() {
   announcer.unlock(); // inside the tap, so phones allow sound
   counter.ignoreMs = settings.ignoreSec * 1000;
   counter.reset();
+  boardShowLast();
   finishes.clear();
   finishSession();
   session = newSession({ plan, settings: sessionSettings() });
@@ -809,6 +845,7 @@ function onCrossing(t) {
   if (r.type === 'start' || r.type === 'lap') {
     const at = frameEpoch(t);
     lapLink.sendCrossing(at, r.type === 'start' ? 0 : r.lap);
+    boardShowLast();
     if (session) {
       if (r.type === 'start') sessionStart(session, at); else sessionLap(session, r.lap, r.ms, at);
       persistSession();
@@ -1000,6 +1037,7 @@ els.undoBtn.addEventListener('click', () => {
   renderPlan();
   recorder?.log('undo', { lap: undone?.lap, detail: undone ? 'lap' : 'start' });
   if (counter.startTime === null && (state === 'timing')) setState('armed');
+  boardShowLast();
   renderLaps();
   if (!els.summary.hidden) renderSummary();
 });
@@ -1287,6 +1325,8 @@ function fillSettings() {
   els.recordSound.checked = !!settings.recordSound;
   els.countSingles.checked = !!settings.countSingles;
   els.stopwatchCode.value = settings.stopwatchCode;
+  els.boardBright.value = settings.boardBrightness ?? 60;
+  renderBoard({ state: board.state, name: board.device?.name || '', detail: '', text: board.last });
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
@@ -1313,6 +1353,33 @@ els.stopwatchCode.addEventListener('change', () => {
   settings.stopwatchCode = normalizeCode(els.stopwatchCode.value);
   els.stopwatchCode.value = settings.stopwatchCode;
   lapLink.setCode(settings.stopwatchCode);
+  save();
+});
+els.boardBtn.addEventListener('click', async () => {
+  if (board.state !== 'off') { board.disconnect(); return; }
+  els.boardStatus.hidden = false;
+  els.boardStatusText.textContent = 'Opening the Bluetooth list…';
+  if (!boardSupported()) {
+    els.boardStatus.hidden = false;
+    els.boardStatusText.textContent = native
+      ? 'This version of the app has no Bluetooth yet. Install the newest TrackTime app.'
+      : 'No Bluetooth in this browser. Use Chrome on Android, or in Brave turn on brave://flags/#brave-web-bluetooth-api.';
+    return;
+  }
+  try {
+    await board.connect();
+    board.brightness(settings.boardBrightness ?? 60);
+  } catch (e) {
+    if (e?.name === 'NotFoundError' && /cancel/i.test(e.message || '')) return; // picker closed
+    els.boardStatus.hidden = false;
+    els.boardStatusText.textContent = /adapter|not available|disabled/i.test(e?.message || '')
+      ? 'Bluetooth is off or not allowed. Turn on Bluetooth (and Location on Android), give Chrome the Nearby devices permission, then try again.'
+      : `Could not connect: ${e?.name || ''} ${e?.message || e}`;
+  }
+});
+els.boardBright.addEventListener('change', () => {
+  settings.boardBrightness = Math.min(255, Math.max(10, Math.round(Number(els.boardBright.value)) || 60));
+  board.brightness(settings.boardBrightness);
   save();
 });
 // Number stepper: −/+ around the same number field.
@@ -1365,6 +1432,7 @@ els.clearBtn.addEventListener('click', () => {
   resetClear();
   recorder?.log('clear');
   counter.reset();
+  boardShowLast();
   finishes.clear(); finishPending = [];
   // Laps timed so far stay in Settings > Sessions; timing carries on as a new session.
   if (session) { finishSession(); session = newSession({ plan, settings: sessionSettings() }); }
