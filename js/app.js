@@ -1635,6 +1635,7 @@ function stopRiders() {
 function attachRiders(s) {
   if (!riderRun || !s) return;
   s.riders = riderRun.summary([0, ...s.laps.map((l) => l.lap)]);
+  try { s.riders.stats = ncam?.ridersInfo() || null; } catch { /* only for checking afterwards */ }
   persistSession(s);
   saveRiderBook();
 }
@@ -1835,6 +1836,7 @@ initLists({
   livePictures: (s) => (s === lastSession && !session && finishes.size ? finishes : null),
   openFinish: openSavedFinish,
   openRiders: (s) => ridersView.open(s),
+  riderBook: () => bookToJSON(riderBook),
   backToSettings: () => {
     fillSettings();
     fillTiles();

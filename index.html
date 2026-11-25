@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=38">
+  <link rel="stylesheet" href="styles.css?v=39">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -419,6 +419,7 @@
           <div id="reviewRiders" class="sum-riders" hidden>
             <div id="reviewLeaders" class="leaders" aria-label="Lap leaders"></div>
             <button id="reviewRidersBtn" class="btn sm ghost" type="button">Check riders</button>
+            <button id="reviewRidersSave" class="btn sm ghost" type="button" title="Save what the app saw (pictures + features) as a file">Save data</button>
           </div>
           <p id="reviewHint" class="note">Tap a lap to see its photo-finish.</p>
           <ol id="reviewLaps" class="rv-laps" aria-label="Laps"></ol>
@@ -449,6 +450,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=38"></script>
+  <script type="module" src="js/app.js?v=39"></script>
 </body>
 </html>
