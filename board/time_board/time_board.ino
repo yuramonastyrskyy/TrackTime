@@ -23,9 +23,11 @@ const int D_PIN   = 17;  // TX2  (32 if you wired D32)
 #define SERVICE_UUID "7a1e0001-5c2b-4d8e-9f00-7472616b7469"
 #define TEXT_UUID    "7a1e0002-5c2b-4d8e-9f00-7472616b7469"
 
-// Demo: while TrackTime isn't connected, cycle through sample lap times in
-// every colour (2 s each). Set to false once you've seen it.
-const bool DEMO = true;
+// Idle screen: while TrackTime isn't connected (and no time came in for
+// 2 minutes), a "TT" box floats around and changes colour at each bounce.
+const bool IDLE_BOUNCE = true;
+// Demo: instead of the idle screen, cycle sample lap times in every colour.
+const bool DEMO = false;
 const char *DEMO_LAPS[] = {"g|23.8", "o|24.6", "p|22.9", "r|25.7", "g|18.4", "o|1:02.3", "p|9.9", "--"};
 
 const uint8_t DEFAULT_BRIGHTNESS = 60;   // keeps the panel well under 2 A
@@ -48,6 +50,7 @@ portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 char pending[16] = "--";
 volatile bool dirty = true;
 volatile bool connected = false;
+volatile uint32_t lastTextMs = 0;     // when TrackTime last sent a time
 bool shownConnected = false;
 
 // ---------- big 7-segment style digits ----------
@@ -124,6 +127,7 @@ class TextCb : public BLECharacteristicCallbacks {
     strncpy(pending, v.c_str(), sizeof(pending) - 1);
     pending[sizeof(pending) - 1] = 0;
     dirty = true;
+    lastTextMs = millis();
     portEXIT_CRITICAL(&mux);
   }
 };
@@ -159,7 +163,48 @@ void setup() {
   Serial.println("Advertising as " BOARD_NAME);
 }
 
+// ---------- idle bounce ----------
+const int BOX_W = 19, BOX_H = 11;
+float bx = 5, by = 4, bdx = 0.6, bdy = 0.4;
+int bcol = 0;
+bool idling = false;
+
+uint16_t bounceColor() {
+  const char order[] = "gopwr";
+  return colorFor(order[bcol % 5]);
+}
+
+void drawBox(int x, int y, uint16_t c) {
+  panel->drawRoundRect(x, y, BOX_W, BOX_H, 3, c);
+  panel->setTextSize(1);
+  panel->setTextColor(c);
+  panel->setCursor(x + 4, y + 2);
+  panel->print("TT");
+}
+
+void idleStep() {
+  int ox = (int)bx, oy = (int)by;
+  bx += bdx; by += bdy;
+  bool hit = false;
+  if (bx <= 0 || bx >= 64 - BOX_W) { bdx = -bdx; bx = constrain(bx, 0, 64 - BOX_W); hit = true; }
+  if (by <= 0 || by >= 32 - BOX_H) { bdy = -bdy; by = constrain(by, 0, 32 - BOX_H); hit = true; }
+  if (hit) bcol++;
+  if ((int)bx == ox && (int)by == oy && !hit) return;   // nothing moved on screen
+  panel->fillRect(ox, oy, BOX_W, BOX_H, 0);
+  drawBox((int)bx, (int)by, bounceColor());
+}
+
 void loop() {
+  bool wantIdle = IDLE_BOUNCE && !DEMO && !connected &&
+                  (lastTextMs == 0 || millis() - lastTextMs > 120000);
+  if (wantIdle) {
+    static uint32_t lastStep = 0;
+    if (!idling) { idling = true; panel->fillScreen(0); }
+    if (millis() - lastStep >= 30) { lastStep = millis(); idleStep(); }
+    delay(5);
+    return;
+  }
+  if (idling) { idling = false; dirty = true; }
   static uint32_t lastDemo = 0;
   static int demoIx = 0;
   if (DEMO && !connected && millis() - lastDemo > 2000) {
