@@ -33,7 +33,7 @@ const els = {
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkStatusText: $('linkStatusText'), linkPill: $('linkPill'),
   boardBtn: $('boardBtn'), boardStatus: $('boardStatus'), boardStatusText: $('boardStatusText'), boardBright: $('boardBright'),
-  restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), finish: $('finish'),
+  restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), fpsMax: $('fpsMax'), finish: $('finish'),
   planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planMain: $('planMain'),
   planSwatch: $('planSwatch'), planWhere: $('planWhere'), planTarget: $('planTarget'), planLeft: $('planLeft'),
   planSub: $('planSub'), planDone: $('planDone'), planDoneSub: $('planDoneSub'),
@@ -60,7 +60,7 @@ function setText(el, text) { if (el.textContent !== text) el.textContent = text;
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, fpsMax: false, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
@@ -426,7 +426,7 @@ async function startNativeCamera() {
   const cam = new NativeCamera(native);
   els.cameraBtn.disabled = true;
   try {
-    await cam.start({ fps: 60 });
+    await cam.start({ fps: nativeFps() });
   } catch (err) {
     if (err?.name === 'NotAllowedError') {
       showCameraError('Camera access was blocked', err.permanent
@@ -451,7 +451,14 @@ async function startNativeCamera() {
 // 720p: plenty for the detector (it works at 960 px). 60 fps when the phone
 // offers it, for a finer photo-finish; Record + time always uses 30 fps (half
 // the video size). The fps pill shows what the camera really gives.
-function wantedFps() { return settings.fps60 !== false && !recorder ? 60 : 30; }
+// "Top frame rate" (a test): ask for the most the camera says it can do.
+function wantedFps() {
+  if (recorder) return 30;
+  if (settings.fpsMax) return 'max';
+  return settings.fps60 !== false ? 60 : 30;
+}
+/** The app camera: 60, or 999 = its fastest range. */
+function nativeFps() { return settings.fpsMax ? 999 : 60; }
 function cameraConstraints(fps) {
   return {
     facingMode: { ideal: 'environment' },
@@ -478,6 +485,7 @@ function describeCamera() {
  * detector needs the detail more than the frame rate.
  */
 async function setCameraFps(fps) {
+  if (fps === 'max') return setCameraMaxFps();
   const vt = stream?.getVideoTracks()[0];
   if (!vt) return;
   const fr = () => safe(() => vt.getSettings().frameRate) || 0;
@@ -489,7 +497,7 @@ async function setCameraFps(fps) {
     await apply(cameraConstraints(30));
     return;
   }
-  if (fr() > 31) return;
+  if (fr() > 31 && fr() < 65) return;
   const tries = [
     cameraConstraints(60),
     { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { min: 50, ideal: 60 } },
@@ -509,6 +517,43 @@ async function setCameraFps(fps) {
     await apply(cameraConstraints(30));
   } else {
     cameraNote = '';
+  }
+  recorder?.log('detector', { detail: describeCamera() });
+}
+/**
+ * Test: asks for the top rate the camera reports (getCapabilities), at 720p,
+ * then 1080p, then any size. Keeps whatever comes, even a smaller picture,
+ * and says so in Settings.
+ */
+async function setCameraMaxFps() {
+  const vt = stream?.getVideoTracks()[0];
+  if (!vt) return;
+  const caps = safe(() => vt.getCapabilities?.()) || {};
+  const top = Math.round(caps.frameRate?.max || 0);
+  const fr = () => safe(() => vt.getSettings().frameRate) || 0;
+  const apply = async (c) => { try { await vt.applyConstraints(c); return true; } catch (e) { return e?.name || 'refused'; } };
+  const base = { facingMode: { ideal: 'environment' } };
+  if (!top) {
+    cameraNote = 'Top rate: the browser does not say what the camera can do; asked for 60.';
+    await apply(cameraConstraints(60));
+  } else {
+    const floor = Math.max(31, Math.floor(top * 0.9));
+    const tries = [
+      { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: top } },
+      { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { min: floor, ideal: top } },
+      { ...base, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { min: floor, ideal: top } },
+      { ...base, frameRate: { min: floor, ideal: top } },
+    ];
+    const notes = [];
+    for (const c of tries) {
+      const r = await apply(c);
+      if (r !== true) { notes.push(r); continue; }
+      if (fr() >= floor) break;
+    }
+    const got = Math.round(fr());
+    cameraNote = got >= floor
+      ? `Top rate: asked for ${top}, got ${got}.`
+      : `Top rate: asked for ${top}, got ${got}${notes.length ? ` (${[...new Set(notes)].join(', ')})` : ''}.`;
   }
   recorder?.log('detector', { detail: describeCamera() });
 }
@@ -1330,6 +1375,7 @@ function fillSettings() {
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
+  els.fpsMax.checked = !!settings.fpsMax;
   fillRidersSettings();
   if (!native) $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 }
@@ -1487,7 +1533,7 @@ function setupNative() {
   window.__ttNativeIntent = take;
   take();
   els.nativeGroup.hidden = false;
-  // Photo-finish: the app camera is always 60 fps, so only say how to see it.
+  // Photo-finish: the app camera runs at 60 fps (or its top rate, as a test).
   els.fps60.closest('label').hidden = true;
   $('camInfo').textContent = 'Always on in the app: tap a lap time (or the big last lap) to see the picture of that crossing.';
 }
@@ -1501,6 +1547,7 @@ function fillCamera(i = ncam?.info()) {
   if (!i) return;
   if (!ncam) { els.camRate.textContent = 'Turn on the camera to see it.'; return; }
   let rate = `${i.fps || 0} fps now, target ${i.fpsTarget ?? '?'}`;
+  if (settings.fpsMax) rate += ` · camera ranges: ${i.fpsRanges || '?'} · slow-motion: ${i.highSpeed || (i.version >= 3 ? 'none' : 'update the app to see')}`;
   if (camStats) {
     const low = Number.isFinite(camStats.minFps) ? camStats.minFps : i.fps;
     rate += ` · since Start: lowest ${low}, ${Math.max(0, (i.dropped || 0) - camStats.dropped0)} frames dropped`;
@@ -1644,6 +1691,22 @@ els.sayGap.addEventListener('change', () => { settings.sayGap = els.sayGap.check
 els.fps60.addEventListener('change', async () => {
   settings.fps60 = els.fps60.checked; save();
   if (stream && !isActive()) await setCameraFps(wantedFps());
+  $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
+});
+els.fpsMax.addEventListener('change', async () => {
+  settings.fpsMax = els.fpsMax.checked; save();
+  if (isActive()) return; // takes effect at the next Stop
+  if (ncam) {
+    // The app picks its rate when the camera starts: start it again.
+    ncam.stop();
+    await new Promise((r) => setTimeout(r, 400));
+    try { await ncam.start({ fps: nativeFps() }); } catch { /* the fps pill shows it */ }
+    if (detector) { try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ } }
+    drawOverlay();
+    fillCamera();
+    return;
+  }
+  if (stream) await setCameraFps(wantedFps());
   $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 });
 els.countSingles.addEventListener('change', () => {

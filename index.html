@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=37">
+  <link rel="stylesheet" href="styles.css?v=38">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -257,6 +257,10 @@
                 <span class="lbl"><b>Camera at 60 fps</b><small>Sharper photo-finish when the phone offers it; the fps pill shows what you get. Record + time always uses 30 fps. Tap a lap to see its picture.</small></span>
                 <input id="fps60" class="sw" type="checkbox" checked>
               </label>
+              <label class="row">
+                <span class="lbl"><b>Top frame rate (test)</b><small>Asks the camera for the most frames per second it says it can do, in the browser and in the app. Below shows what it offers and what you get. Record + time still uses 30 fps.</small></span>
+                <input id="fpsMax" class="sw" type="checkbox">
+              </label>
               <p id="camInfo" class="row meta" role="status"></p>
             </div>
           </section>
@@ -445,6 +449,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=37"></script>
+  <script type="module" src="js/app.js?v=38"></script>
 </body>
 </html>
