@@ -1,8 +1,9 @@
 // LED time board: shows the lead team's lap time on a 64x32 LED panel driven
 // by an ESP32 (firmware: time-board/time_board.ino in the project files).
 //
-// The phone talks to the board over Bluetooth LE (Web Bluetooth, Chrome or
-// Brave on Android, Chrome on a Mac). The board has one writable
+// The phone talks to the board over Bluetooth LE: Web Bluetooth in Chrome (or
+// Brave with its flag on), or in the Android app through its native bridge
+// window.TrackTimeBoard (TrackBoardPlugin.java), which has no Web Bluetooth. The board has one writable
 // characteristic: we write the text to show ("23.8", "--"), or "!B<0-255>"
 // to set the brightness.
 
@@ -11,7 +12,12 @@ export const BOARD_TEXT = '7a1e0002-5c2b-4d8e-9f00-7472616b7469';
 
 const enc = new TextEncoder();
 
-export const boardSupported = () => !!(typeof navigator !== 'undefined' && navigator.bluetooth);
+/** The app's native Bluetooth bridge, if this page runs inside the app. */
+export const nativeBoard = (w = globalThis) => {
+  const n = w?.TrackTimeBoard;
+  try { return n && typeof n.version === 'function' && n.version() >= 1 ? n : null; } catch { return null; }
+};
+export const boardSupported = () => !!(nativeBoard() || (typeof navigator !== 'undefined' && navigator.bluetooth));
 
 export class LapBoard {
   constructor({ onState } = {}) {
@@ -25,14 +31,27 @@ export class LapBoard {
     this.retry = 0;
     this.timer = 0;
     this.wanted = false;       // user asked to be connected
+    this.native = nativeBoard();
+    if (this.native) {
+      // The app pushes its state here; a fresh 'on' gets the current text.
+      globalThis.__ttBoard = (st) => {
+        const was = this.state;
+        this.state = st.state;
+        this.nativeName = st.name || '';
+        this.emit(st.detail || '');
+        if (st.state === 'on' && was !== 'on') this.resend();
+      };
+      try { const st = JSON.parse(this.native.state()); this.state = st.state; this.nativeName = st.name || ''; } catch { /* keep off */ }
+    }
   }
 
   emit(detail = '') {
-    this.onState?.({ state: this.state, name: this.device?.name || '', detail, text: this.last });
+    this.onState?.({ state: this.state, name: this.native ? this.nativeName : this.device?.name || '', detail, text: this.last });
   }
 
   /** Must be called from a click: the browser shows its device picker. */
   async connect() {
+    if (this.native) { this.wanted = true; this.native.connect(); return; }
     if (!boardSupported()) throw new Error('This browser has no Bluetooth. Use Chrome on Android, or Brave with Web Bluetooth turned on.');
     const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [BOARD_SERVICE] }] });
     this.useDevice(device);
@@ -41,6 +60,7 @@ export class LapBoard {
 
   /** Reconnect to a board picked in an earlier visit, if the browser allows it. */
   async restore() {
+    if (this.native) return this.state === 'on';
     if (!navigator.bluetooth?.getDevices) return false;
     try {
       const devs = await navigator.bluetooth.getDevices();
@@ -70,7 +90,7 @@ export class LapBoard {
       const svc = await server.getPrimaryService(BOARD_SERVICE);
       this.char = await svc.getCharacteristic(BOARD_TEXT);
       this.state = 'on'; this.retry = 0; this.emit();
-      this.write(this.last);
+      this.resend();
     } catch (e) {
       this.char = null;
       this.lost(e?.message);
@@ -88,6 +108,7 @@ export class LapBoard {
 
   disconnect() {
     this.wanted = false;
+    if (this.native) { this.native.disconnect(); return; }
     clearTimeout(this.timer);
     try { this.device?.gatt?.disconnect(); } catch { /* already gone */ }
     this.char = null;
@@ -100,11 +121,19 @@ export class LapBoard {
     this.write(this.last);
   }
 
+  /** After a (re)connect: brightness, then the current text. */
+  resend() {
+    if (this.level != null) this.write(`!B${this.level}`);
+    this.write(this.last);
+  }
+
   brightness(level) {
+    this.level = Math.max(0, Math.min(255, Math.round(level)));
     this.write(`!B${Math.max(0, Math.min(255, Math.round(level)))}`);
   }
 
   async write(text) {
+    if (this.native) { if (this.state === 'on') this.native.write(text); return; }
     if (!this.char) return;
     if (this.busy) { this.next = text; return; }
     this.busy = true;

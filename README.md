@@ -59,7 +59,7 @@ A battery LED board at the finish line can show each lap time (for example `23.8
 1. Load `board/time_board/time_board.ino` onto the ESP32 with Arduino IDE (board "ESP32 Dev Module"; libraries "ESP32 HUB75 LED MATRIX PANEL DMA Display" and "Adafruit GFX Library"). `board/pin_test/` checks the wiring pin by pin.
 2. In TrackTime: Settings > Time board > **Connect time board**, and pick "TrackTime Board". Each lap, undo and clear then updates the board; it reconnects by itself if the link drops.
 
-Bluetooth from a web page needs Chrome (or Brave with Web Bluetooth turned on) on Android or a Mac; iPhones and the Android app can't do it yet.
+The TrackTime Android app connects through its own Bluetooth code (`TrackBoardPlugin.java`). In a browser it needs Web Bluetooth: Chrome on Android or a Mac, or Brave with brave://flags > Web Bluetooth API turned on. iPhones can't do it.
 
 ## Android app
 

@@ -1353,7 +1353,7 @@ els.boardBtn.addEventListener('click', async () => {
   if (!boardSupported()) {
     els.boardStatus.hidden = false;
     els.boardStatusText.textContent = native
-      ? 'Bluetooth to the board works in the browser version (Chrome or Brave), not in this app yet.'
+      ? 'This version of the app has no Bluetooth yet. Install the newest TrackTime app.'
       : 'No Bluetooth in this browser. Use Chrome on Android, or in Brave turn on brave://flags/#brave-web-bluetooth-api.';
     return;
   }
