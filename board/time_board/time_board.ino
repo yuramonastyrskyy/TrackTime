@@ -23,8 +23,8 @@ const int D_PIN   = 17;  // TX2  (32 if you wired D32)
 #define SERVICE_UUID "7a1e0001-5c2b-4d8e-9f00-7472616b7469"
 #define TEXT_UUID    "7a1e0002-5c2b-4d8e-9f00-7472616b7469"
 
-// Idle screen: while TrackTime isn't connected (and no time came in for
-// 2 minutes), a "TT" box floats around and changes colour at each bounce.
+// Idle screen: while TrackTime isn't connected (after a 5 s grace for short
+// drop-outs), a "TT" box floats around and changes colour at each bounce.
 const bool IDLE_BOUNCE = true;
 // Demo: instead of the idle screen, cycle sample lap times in every colour.
 const bool DEMO = false;
@@ -51,6 +51,7 @@ char pending[16] = "--";
 volatile bool dirty = true;
 volatile bool connected = false;
 volatile uint32_t lastTextMs = 0;     // when TrackTime last sent a time
+volatile uint32_t linkChangeMs = 0;   // when the link last connected or dropped
 bool shownConnected = false;
 
 // ---------- big 7-segment style digits ----------
@@ -106,9 +107,9 @@ void drawTime(const char *s) {
 
 // ---------- Bluetooth ----------
 class ServerCb : public BLEServerCallbacks {
-  void onConnect(BLEServer *) override { connected = true; dirty = true; }
+  void onConnect(BLEServer *) override { connected = true; dirty = true; linkChangeMs = millis(); }
   void onDisconnect(BLEServer *s) override {
-    connected = false; dirty = true;
+    connected = false; dirty = true; linkChangeMs = millis();
     delay(200);
     BLEDevice::startAdvertising();   // let TrackTime reconnect
   }
@@ -196,7 +197,7 @@ void idleStep() {
 
 void loop() {
   bool wantIdle = IDLE_BOUNCE && !DEMO && !connected &&
-                  (lastTextMs == 0 || millis() - lastTextMs > 120000);
+                  (linkChangeMs == 0 || millis() - linkChangeMs > 5000);
   if (wantIdle) {
     static uint32_t lastStep = 0;
     if (!idling) { idling = true; panel->fillScreen(0); }
