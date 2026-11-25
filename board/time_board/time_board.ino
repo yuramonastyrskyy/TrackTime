@@ -135,6 +135,10 @@ void setup() {
                                   4, 15, CLK_PIN};           // LAT OE CLK
   HUB75_I2S_CFG cfg(64, 32, 1, pins);
   cfg.clkphase = false;
+  // Jumper wires pick up noise: a slower clock and longer latch blanking stop
+  // stray/flickering pixels.
+  cfg.i2sspeed = HUB75_I2S_CFG::HZ_8M;
+  cfg.latch_blanking = 4;
   cfg.driver = HUB75_I2S_CFG::FM6124;   // the panel's driver chips (labelled on the back)
   panel = new MatrixPanel_I2S_DMA(cfg);
   panel->begin();
