@@ -8,7 +8,8 @@
 // A message starting with "!B" sets the brightness instead, e.g. "!B80" (0-255).
 // Optional colour in front, letter + '|': "g|23.8" green (on target),
 // "o|24.6" orange (slow), "r|25.4" red (too slow), "p|22.9" purple (fast),
-// "w|..." white. No prefix: amber.
+// "w|..." white, "a|" or no prefix: amber. Optional riding line at the end:
+// "g|23.8|b" adds a bar on the right edge: r red, b blue, y yellow.
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <BLEDevice.h>
@@ -42,6 +43,8 @@ uint16_t colorFor(char c) {
     case 'r': return panel->color565(255, 0, 0);      // too slow
     case 'p': return panel->color565(150, 0, 255);    // fast
     case 'w': return panel->color565(255, 255, 255);
+    case 'b': return panel->color565(0, 60, 255);     // blue line
+    case 'y': return panel->color565(255, 200, 0);    // yellow line
     default:  return panel->color565(255, 150, 0);    // amber
   }
 }
@@ -77,20 +80,31 @@ void drawDigit(int x, uint8_t bits, int w, int t) {
   if (bits & 0x40) panel->fillRect(x, y + h2 - t / 2, w, t, digitColor);          // g
 }
 
-void drawTime(const char *s) {
+const int BAR_W = 3;   // riding-line bar on the right edge
+
+void drawTime(const char *msg) {
   panel->fillScreen(0);
   digitColor = colorFor(0);
-  if (s[0] && s[1] == '|') { digitColor = colorFor(s[0]); s += 2; }
-  // Pick the widest digits that fit the 64 px width (16 px max).
+  if (msg[0] && msg[1] == '|') { digitColor = colorFor(msg[0]); msg += 2; }
+  // Optional riding line after a second '|': r (below red), b (below blue), y (above blue).
+  char buf[16];
+  strncpy(buf, msg, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
+  char line = 0;
+  char *bar = strchr(buf, '|');
+  if (bar) { line = bar[1]; *bar = 0; }
+  const char *s = buf;
+  const int AREA = line ? 64 - BAR_W - 2 : 64;
+  if (line) panel->fillRect(64 - BAR_W, 0, BAR_W, 32, colorFor(line));
+  // Pick the widest digits that fit (16 px max).
   int w = 16, t = 4, total = 0;
   for (; w >= 6; w--) {
     t = w >= 13 ? 4 : 3;
     total = 0; int n = 0;
     for (const char *p = s; *p; p++) { int cw = charWidth(*p, w, t); if (cw) { total += cw; n++; } }
     if (n > 1) total += (n - 1) * GAP;
-    if (total <= 64) break;
+    if (total <= AREA) break;
   }
-  int x = (64 - total) / 2;
+  int x = (AREA - total) / 2;
   for (const char *p = s; *p; p++) {
     char ch = *p;
     int cw = charWidth(ch, w, t);
@@ -101,8 +115,8 @@ void drawTime(const char *s) {
     else if (ch == ':') { panel->fillRect(x, TOP + 8, t, t, digitColor); panel->fillRect(x, TOP + H - 8 - t, t, t, digitColor); }
     x += cw + GAP;
   }
-  // Bluetooth dot, bottom-right corner: blue when TrackTime is connected.
-  if (connected) panel->drawPixel(63, 31, panel->color565(0, 0, 255));
+  // Bluetooth dot, bottom corner (left when a line bar is on the right): blue when connected.
+  if (connected) panel->drawPixel(line ? 0 : 63, 31, panel->color565(0, 0, 255));
 }
 
 // ---------- Bluetooth ----------

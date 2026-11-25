@@ -161,15 +161,23 @@ function renderLink(s) {
 }
 // ---------- LED time board (Bluetooth) ----------
 const board = new LapBoard({ onState: renderBoard });
-// With a Pacemaker plan the time takes the lap's band colour: "g|23.8".
+// Message: colour|time|line, e.g. "g|23.8|b". With a Pacemaker plan the time
+// takes the lap's band colour (else 'a', amber) and a bar on the right shows
+// where the current block rides: red (below red / corridor), blue, yellow (above blue).
 const BOARD_BAND = { good: 'g', slow: 'o', veryslow: 'r', fast: 'p' };
+const BOARD_LINE = { red: 'r', corridor: 'r', blue: 'b', above: 'y' };
+function boardLine() {
+  const p = plan ? currentProgress() : null;
+  if (!p || p.done || !p.block || p.block.kind !== 'ride') return '';
+  return BOARD_LINE[p.block.where] || '';
+}
 function boardShowLast() {
   const laps = counter.laps;
   const last = laps[laps.length - 1];
-  if (!last) { board.show('--'); return; }
-  const r = currentProgress()?.results?.[laps.length - 1];
-  const c = r && !r.break ? BOARD_BAND[r.band] : null;
-  board.show(`${c ? `${c}|` : ''}${formatLap(last.ms, 1)}`);
+  const r = last ? currentProgress()?.results?.[laps.length - 1] : null;
+  const c = (r && !r.break ? BOARD_BAND[r.band] : null) || 'a';
+  const line = boardLine();
+  board.show(`${c}|${last ? formatLap(last.ms, 1) : '--'}${line ? `|${line}` : ''}`);
 }
 function renderBoard(s) {
   if (!els.boardBtn) return;
@@ -249,6 +257,7 @@ function currentProgress() {
 // only text and a few classes change, never the layout around it.
 function renderPlan() {
   els.planStrip.hidden = !planShown();
+  boardShowLast(); // the block (and its line) may have changed
   if (!plan) return;
   const t = boardParts(plan, currentProgress());
   setText(els.planName, plan.name);
@@ -750,7 +759,7 @@ function startTiming() {
   announcer.unlock(); // inside the tap, so phones allow sound
   counter.ignoreMs = settings.ignoreSec * 1000;
   counter.reset();
-  board.show('--');
+  boardShowLast();
   finishes.clear();
   finishSession();
   session = newSession({ plan, settings: sessionSettings() });
@@ -836,7 +845,7 @@ function onCrossing(t) {
   if (r.type === 'start' || r.type === 'lap') {
     const at = frameEpoch(t);
     lapLink.sendCrossing(at, r.type === 'start' ? 0 : r.lap);
-    if (r.type === 'start') board.show('--'); else boardShowLast();
+    boardShowLast();
     if (session) {
       if (r.type === 'start') sessionStart(session, at); else sessionLap(session, r.lap, r.ms, at);
       persistSession();
@@ -1423,7 +1432,7 @@ els.clearBtn.addEventListener('click', () => {
   resetClear();
   recorder?.log('clear');
   counter.reset();
-  board.show('--');
+  boardShowLast();
   finishes.clear(); finishPending = [];
   // Laps timed so far stay in Settings > Sessions; timing carries on as a new session.
   if (session) { finishSession(); session = newSession({ plan, settings: sessionSettings() }); }

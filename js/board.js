@@ -4,8 +4,8 @@
 // The phone talks to the board over Bluetooth LE: Web Bluetooth in Chrome (or
 // Brave with its flag on), or in the Android app through its native bridge
 // window.TrackTimeBoard (TrackBoardPlugin.java), which has no Web Bluetooth. The board has one writable
-// characteristic: we write the text to show ("23.8", "--"), or "!B<0-255>"
-// to set the brightness.
+// characteristic: we write what to show as colour|time|line ("g|23.8|b",
+// "a|--"), or "!B<0-255>" to set the brightness.
 
 export const BOARD_SERVICE = '7a1e0001-5c2b-4d8e-9f00-7472616b7469';
 export const BOARD_TEXT = '7a1e0002-5c2b-4d8e-9f00-7472616b7469';
@@ -117,6 +117,7 @@ export class LapBoard {
 
   /** Show text on the board (only the newest text is kept while a write is in flight). */
   show(text) {
+    if (String(text) === this.last && this.state === 'on') return; // nothing new
     this.last = String(text);
     this.write(this.last);
   }
