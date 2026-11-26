@@ -13,7 +13,7 @@ const els = {
   sessionsBtn: $('sessionsBtn'), sessions: $('sessions'), sessList: $('sessList'),
   sendBtn: $('sendBtn'), sendNote: $('sendNote'), sendLabel: $('sendLabel'), sendIcon: $('sendIcon'),
   review: $('review'), reviewBack: $('reviewBack'), reviewSub: $('reviewSub'), reviewMeta: $('reviewMeta'),
-  reviewRiders: $('reviewRiders'), reviewLeaders: $('reviewLeaders'), reviewRidersBtn: $('reviewRidersBtn'),
+  reviewRiders: $('reviewRiders'), reviewLeaders: $('reviewLeaders'), reviewRidersBtn: $('reviewRidersBtn'), reviewRidersSave: $('reviewRidersSave'),
   reviewHint: $('reviewHint'), reviewLaps: $('reviewLaps'), reviewSend: $('reviewSend'), reviewNote: $('reviewNote'),
 };
 
@@ -46,6 +46,7 @@ export function initLists(c) {
   els.reviewBack.addEventListener('click', () => { els.review.close(); openSessions(); });
   els.reviewRidersBtn.addEventListener('click', () => { if (review) ctx.openRiders(review.s); });
   els.reviewLeaders.addEventListener('click', () => { if (review?.s.riders) ctx.openRiders(review.s); });
+  els.reviewRidersSave.addEventListener('click', () => { if (review?.s.riders) saveRiderData(review.s); });
   els.reviewSend.addEventListener('click', () => { if (review) sendToPacemaker(review.s, els.reviewSend, els.reviewNote, () => renderReview()); });
   els.review.addEventListener('close', () => { review = null; });
 }
@@ -365,6 +366,7 @@ function renderReview() {
   els.reviewRidersBtn.disabled = !s.riders;
   els.reviewRidersBtn.textContent = !s.riders ? 'Looking at the riders…' : unsure ? `Check riders (${unsure} ?)` : 'Riders';
   els.reviewRidersBtn.classList.toggle('send', unsure > 0);
+  els.reviewRidersSave.hidden = !s.riders;
   els.reviewLeaders.replaceChildren(...s.laps.map((l) => leaderOf(s, l.lap)).filter((x) => x && x.thumb).map((x) => {
     const img = document.createElement('img');
     img.src = x.thumb; img.alt = x.name;
@@ -415,6 +417,21 @@ function renderReview() {
   btn.textContent = !s.sentAt ? 'Send to Pacemaker' : changed ? 'Send the changes to Pacemaker' : 'Send again';
   if (changed) setNote(els.reviewNote, 'Riders changed since this was sent.');
   else if (!els.reviewNote.classList.contains('err')) els.reviewNote.hidden = true;
+}
+
+// What the app saw for one session's riders (each crossing's picture, colour
+// and re-ID features, the app's guesses and the riders it knows), as a file
+// to check and re-tune the matching on a computer.
+function saveRiderData(s) {
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+  const text = JSON.stringify({
+    kind: 'tracktime-riders', v: 1, savedAt: new Date().toISOString(),
+    session: s, book: ctx.riderBook?.() ?? null,
+  }, (k, v) => (ArrayBuffer.isView(v) ? Array.from(v, r3) : v));
+  const d = new Date(s.startedAt ?? s.createdAt ?? Date.now());
+  const p = (n) => String(n).padStart(2, '0');
+  const name = `tracktime-riders-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.json`;
+  shareOrDownload(new File([text], name, { type: 'application/json' }));
 }
 
 export function formatDuration(ms) {
