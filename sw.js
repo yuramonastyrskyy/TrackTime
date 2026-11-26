@@ -1,10 +1,14 @@
 // Offline cache: the app works at the velodrome without internet after one visit.
 // Only this app's own old caches are deleted: the preview copy under /preview/
 // shares the site and keeps its caches under 'tracktime-preview-v…'.
-const VERSION = 'tracktime-v24';
+const VERSION = 'tracktime-v25';
 const CLIPS = [...Array(100).keys()].map((n) => `audio/en/${n}.m4a`).concat(['point', 'minute', 'start', 'plus', 'minus', 'nextblock'].map((w) => `audio/en/${w}.m4a`));
-// Coach clips that exist (see audio/coach/README.md). Add a6/b6 and whole calls (NN) here once recorded.
-const COACH = ['a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a7', 'a8', 'a9', 'b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b7', 'b8', 'b9'].map((n) => `audio/coach/${n}.m4a`);
+// Coach clips (see js/speech.js COACH_CLIPS): whole calls 00..99 and the words in
+// her AI-cloned voice, plus the older digit clips (no a6/b6).
+const COACH = [...Array(100).keys()].map((n) => String(n).padStart(2, '0'))
+  .concat(['start', 'plus', 'minus', 'nextblock'])
+  .concat([0, 1, 2, 3, 4, 5, 7, 8, 9].flatMap((d) => [`a${d}`, `b${d}`]))
+  .map((n) => `audio/coach/${n}.m4a`);
 const SHELL = ['./', 'index.html', 'styles.css', 'js/app.js', 'js/detector.js', 'js/speech.js', 'js/recorder.js', 'js/glsampler.js', 'js/lapLink.js', 'js/plan.js', 'js/session.js', 'js/lists.js', 'js/photofinish.js', 'js/finishView.js', 'js/nativeCamera.js', 'js/riders.js', 'js/ridersView.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...CLIPS, ...COACH];
 
 self.addEventListener('install', (e) => {

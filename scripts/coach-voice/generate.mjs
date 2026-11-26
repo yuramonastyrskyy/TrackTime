@@ -13,7 +13,7 @@
 // http://localhost:8080/scripts/coach-voice/review.html, redo bad ones with
 // --only, then --install. Needs Node 18+ and macOS (afconvert makes the AAC).
 //
-// Options: --model eleven_multilingual_v2 (default), --stability 0.5,
+// Options: --model eleven_v4 (default; v3 also follows the tags), --stability 0.5,
 // --similarity 0.85, --force (regenerate clips that already exist),
 // --new-voice (clone again from --sample instead of reusing the saved voice).
 
@@ -64,7 +64,8 @@ async function check() {
 }
 
 function parseArgs(list) {
-  const out = { model: 'eleven_multilingual_v2', stability: 0.5, similarity: 0.85 };
+  // eleven_v4 follows the [loud][fast][screaming] tags in calls.txt; eleven_multilingual_v2 would read them out.
+  const out = { model: 'eleven_v4', stability: 0.5, similarity: 0.85 };
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
     if (!a.startsWith('--')) throw new Error(`Unexpected argument: ${a}`);

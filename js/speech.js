@@ -3,11 +3,12 @@
 //    but missing in some in-app browsers (for example Telegram on Android).
 //  - "clips": short recorded words from audio/<lang>/ played back to back with
 //    Web Audio. Works everywhere once the user has tapped a button.
-//  - "coach": the coach's own voice, cut from a recording (audio/coach/). She
-//    calls a lap as units + tenths, dropping the tens: 23.7 -> "три сім",
-//    18.0 -> "вісім нуль". Best is a whole recorded call (audio/coach/37.m4a);
-//    otherwise two digit clips are joined (aN = said first, bN = said second),
-//    and a digit with no coach clip falls back to the English clip.
+//  - "coach": the coach's voice (audio/coach/). She calls a lap as units +
+//    tenths, dropping the tens: 23.7 -> "три-сім". Every call 00..99 is a
+//    whole clip in an AI clone of her voice (scripts/coach-voice/, with her
+//    consent); if one is missing, two digit clips cut from her recording are
+//    joined (aN = said first, bN = said second), then the English clips.
+//    The gap to target is said the same way ("плюс" + "ноль-три").
 // "auto" uses the phone voice when it has one, otherwise the clips.
 
 export class Announcer {
@@ -77,6 +78,7 @@ export class Announcer {
   }
 
   sayStart() {
+    if (this.mode === 'coach') { this.playClips([this.coachWord('start')]); return; }
     this.speak('start', ['start']);
   }
 
@@ -87,8 +89,7 @@ export class Announcer {
    */
   sayLap(text, { gap = null, decimals = 1, nextBlock = false } = {}) {
     const opts = { gap, decimals, nextBlock };
-    // The coach has no recorded gap or "next block" yet, so those extras use the English clips.
-    if (this.mode === 'coach') { this.playClips(this.coachKeys(text).concat(extraWords(opts))); return; }
+    if (this.mode === 'coach') { this.playClips(this.coachKeys(text).concat(this.coachExtras(opts))); return; }
     this.speak(spokenText(text, opts), wordsFor(text).concat(extraWords(opts)));
   }
 
@@ -99,6 +100,25 @@ export class Announcer {
     const pick = (pos, d) => [`coach/${pos}${d}`, `coach/${pos === 'a' ? 'b' : 'a'}${d}`, String(d)]
       .find((k) => this.buffers.has(k)) ?? String(d);
     return [pick('a', first), pick('b', second)];
+  }
+
+  /** The coach's word clip (start, plus, minus, nextblock), or the English one if she has none. */
+  coachWord(word) {
+    return this.buffers.has(`coach/${word}`) ? `coach/${word}` : word;
+  }
+
+  /**
+   * Extras in the coach's voice: the gap is said like a lap call,
+   * 0.3 slow -> "плюс" + "ноль-три"; then "наступний блок".
+   */
+  coachExtras({ gap = null, decimals = 1, nextBlock = false } = {}) {
+    const out = [];
+    if (gap !== null && Number.isFinite(gap)) {
+      const abs = Math.abs(gap).toFixed(decimals);
+      out.push(PAUSE, this.coachWord(gap < 0 && Number(abs) !== 0 ? 'minus' : 'plus'), ...this.coachKeys(abs));
+    }
+    if (nextBlock) out.push(PAUSE, this.coachWord('nextblock'));
+    return out;
   }
 
   speak(text, words) {
@@ -159,10 +179,14 @@ export function spokenText(text, { gap = null, decimals = 1, nextBlock = false }
   return out;
 }
 
-// Coach clip names: a0..a9 (digit said first) and b0..b9 (said second).
-// Whole calls 00..99 are preferred when recorded.
-export const COACH_CLIPS = [...Array(10).keys()].flatMap((d) => [`a${d}`, `b${d}`])
-  .concat([...Array(100).keys()].map((n) => String(n).padStart(2, '0')));
+// Coach clips (audio/coach/): whole calls 00..99 and the words, generated in
+// her cloned voice (scripts/coach-voice/), plus the older digit clips cut from
+// her recording, a0..a9 (said first) and b0..b9 (said second), as a fallback.
+// "шість" was never recorded on its own, so there is no a6/b6.
+export const COACH_WORDS = ['start', 'plus', 'minus', 'nextblock'];
+export const COACH_CLIPS = [...Array(100).keys()].map((n) => String(n).padStart(2, '0'))
+  .concat(COACH_WORDS)
+  .concat([0, 1, 2, 3, 4, 5, 7, 8, 9].flatMap((d) => [`a${d}`, `b${d}`]));
 
 /** The coach's call: units digit and tenths digit. "23.7" -> [3,7]; "1:05.2" -> [5,2]; "18" -> [8,0]. */
 export function coachDigitsFor(text) {

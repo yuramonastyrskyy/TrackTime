@@ -90,7 +90,7 @@ Code:
 - `js/session.js`: timing sessions and sending them to Pacemaker (tested in Node).
 - `sw.js`, `manifest.webmanifest`: offline use and "Add to Home Screen".
 
-**Coach voice** (the default) plays the coach's own recorded digits the way she calls times: units + tenths, so 23.7 is "три сім". See `audio/coach/README.md`.
+**Coach voice** (the default) calls lap times the way the coach does: units + tenths, so 23.7 is "три-сім", in an AI clone of her voice (made with her consent), dialect included. With a plan, the gap is said the same way ("плюс" + "ноль-три") and "Наступний блок" too. All 100 calls are stored clips, so it works offline. See `audio/coach/README.md`; to change how a call sounds, edit `scripts/coach-voice/calls.txt` and regenerate it.
 
 The clips in `audio/en/` are generated with espeak-ng. You can replace any of them with your own recordings (for example the coach's voice) as long as the file names stay the same.
 
