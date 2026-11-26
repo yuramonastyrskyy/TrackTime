@@ -60,7 +60,7 @@ function setText(el, text) { if (el.textContent !== text) el.textContent = text;
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'coach', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'coach', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, fpsMax: false, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
