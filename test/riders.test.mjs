@@ -205,3 +205,14 @@ test('riders learnt with older colour features are dropped', () => {
   assert.ok(r.every((x) => x.isNew));
   assert.equal(bookFromJSON(bookToJSON(book)).fv, 2);
 });
+
+test('one rider crossing alone is the same rider every lap', () => {
+  const book = new RiderBook();
+  const ids = [1, 2, 3, 4].map((seed) => book.addLap([{ t: 0, ...feat(2, 0.15, seed * 31) }])[0]);
+  assert.equal(book.riders.length, 1);
+  assert.ok(ids.every((r) => r.rider === 'r1'));
+  assert.ok(ids.slice(1).every((r) => r.sure));
+  // A second, different rider joining later is still told apart.
+  const r = book.addLap([{ t: 0, ...feat(2, 0.15, 500) }, { t: 300, ...feat(6, 0.15, 501) }]);
+  assert.deepEqual(r.map((x) => x.rider), ['r1', 'r2']);
+});
