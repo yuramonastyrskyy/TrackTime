@@ -123,7 +123,7 @@ export class RidersView {
       return box;
     }));
 
-    // Laps: crossings in order, the leader marked; unsure ones dashed with "?".
+    // Laps: who crossed first in each (one rider per lap); unsure ones dashed with "?".
     const byId = new Map(R.riders.map((r) => [r.id, r]));
     const lapMs = new Map(session.laps.map((l) => [l.lap, l.ms]));
     e.laps.replaceChildren(...keys.filter((k) => R.laps[k]?.order.length).map((k) => {
@@ -137,7 +137,11 @@ export class RidersView {
       head.append(b, k === 0 ? '' : formatLap(lapMs.get(k), decimals));
       const row = document.createElement('div');
       row.className = 'row-x';
-      x.order.forEach((o, i) => {
+      // One rider per lap: the one who crossed first (the others still teach the
+      // app what each rider looks like, but are not shown for checking).
+      const li0 = x.order.findIndex((q) => q.id === x.leader && q.id !== IGNORED);
+      const shown = li0 >= 0 ? [li0] : x.order.length ? [x.order.findIndex((q) => q.id !== IGNORED)].filter((i) => i >= 0) : [];
+      shown.map((i) => [x.order[i], i]).forEach(([o, i]) => {
         const btn = document.createElement('button');
         btn.type = 'button';
         const isLead = o.id === x.leader && o.id !== IGNORED && i === x.order.findIndex((q) => q.id === x.leader);

@@ -178,3 +178,30 @@ test('correctSaved works on sessions saved without features', () => {
   assert.equal(book.nextId, 8);
   assert.equal(correctSaved(riders, book, 5, 0, 'r1'), false);
 });
+
+test('riders in the same kit are told apart by the bike', () => {
+  const kit = (bike, seed) => {
+    const f = feat(0, 0.15, seed);
+    f.col[324] -= 1; f.col[324 + 30 + bike * 9] += 1; // same jersey and legs, only the bike differs
+    return f;
+  };
+  const book = new RiderBook();
+  const lap = (seed) => [{ t: 0, ...kit(0, seed) }, { t: 200, ...kit(1, seed + 5) }, { t: 400, ...feat(3, 0.15, seed + 9) }];
+  book.addLap(lap(1));
+  assert.equal(book.riders.length, 3);
+  for (const seed of [40, 70, 110]) {
+    const r = book.addLap(lap(seed).reverse());
+    assert.deepEqual(r.map((x) => x.rider), ['r3', 'r2', 'r1']);
+  }
+});
+
+test('riders learnt with older colour features are dropped', () => {
+  const book = bookFromJSON(bookToJSON((() => { const b = new RiderBook(); b.addLap([{ t: 0, ...feat(1) }]); return b; })()));
+  assert.equal(book.riders.length, 1);
+  assert.equal(book.fv, 1);
+  const r = book.addLap([{ t: 0, fv: 2, ...feat(2) }, { t: 200, fv: 2, ...feat(4) }]);
+  assert.equal(book.fv, 2);
+  assert.equal(book.riders.length, 2);
+  assert.ok(r.every((x) => x.isNew));
+  assert.equal(bookFromJSON(bookToJSON(book)).fv, 2);
+});

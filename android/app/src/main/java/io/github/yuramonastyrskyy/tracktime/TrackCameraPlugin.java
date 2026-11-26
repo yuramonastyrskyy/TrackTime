@@ -84,7 +84,7 @@ import java.util.concurrent.Executors;
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class TrackCameraPlugin extends Plugin {
 
-    static final int VERSION = 3; // 2: rider identification (riders*); 3: info().highSpeed
+    static final int VERSION = 4; // 2: rider identification (riders*); 3: info().highSpeed; 4: rider colour features v2 (fv)
     static final int PERM_CODE = 7101;
     private static final int MAX_QUEUE = 180; // 3 s at 60 fps if the page stops pulling
 
