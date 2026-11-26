@@ -25,6 +25,8 @@ export const RIDER_TUNING = {
   sureMargin: 0.08,    // ...and this far ahead of the next rider: sure
   leadBeforeMs: 400,   // lap leader: first rider at most this long before the lap's crossing time...
   leadAfterMs: 1500,   // ...or this long after it
+  centreK: 8,          // centring grows with what was seen: weight n / (n + centreK) after n crossings...
+  centreMax: 60,       // ...the centre is the mean of about the last this many crossings
   maxSamples: 12,      // samples kept per rider (the most recent and the confirmed ones)
 };
 
@@ -141,15 +143,15 @@ export function assign(cost) {
 /**
  * The riders of a session. Each rider keeps a few samples (colour and re-ID
  * vectors) and a picture; matching compares a crossing with the mean of each
- * rider's samples. Features are centred on the mean of everything seen in the
- * first lap that had riders, so colours every rider shares (the track, the
- * hall's light) count for little.
+ * rider's samples. Features are centred on the running mean of the crossings
+ * seen (see centreShare), so colours every rider shares (the track, the hall's
+ * light) count for little.
  */
 export class RiderBook {
   constructor(tuning = RIDER_TUNING) {
     this.tuning = tuning;
     this.riders = [];   // { id, name, samples: [{ col, emb, sure }], thumb, centroid }
-    this.centre = null; // { col, emb }
+    this.centre = null; // { col, emb, n }: mean of the crossings seen so far
     this.nextId = 1;
     this.fv = null;     // colour features version (the app's RiderVision.FEATURES); riders learnt with another are dropped
   }
@@ -158,9 +160,35 @@ export class RiderBook {
   vec(c) {
     const t = this.tuning;
     const rw = t.regionWeights || [1, 1, 1], n = c.col.length / 3;
-    const col = norm(sub(c.col, this.centre.col).map((v, i) => v * rw[Math.min(2, Math.floor(i / n))])).map((v) => v * t.colourWeight);
-    const emb = c.emb && this.centre.emb ? norm(sub(c.emb, this.centre.emb)).map((v) => v * t.reidWeight) : [];
+    const a = this.centreShare(), cc = this.centre.col;
+    const col = norm(c.col.map((v, i) => v - a * cc[i]).map((v, i) => v * rw[Math.min(2, Math.floor(i / n))])).map((v) => v * t.colourWeight);
+    const ce = this.centre.emb;
+    const emb = c.emb ? norm(ce ? c.emb.map((v, i) => v - a * ce[i]) : c.emb).map((v) => v * t.reidWeight) : [];
     return norm(col.concat(emb));
+  }
+
+  /**
+   * How much of the centre to take away. Centring makes colours every rider
+   * shares (the track, the light) count for little, but with only a few
+   * crossings seen the "centre" is those riders themselves, and one rider
+   * seen alone would look like no one at all, so it starts small.
+   */
+  centreShare() {
+    const n = this.centre?.n ?? 0, k = this.tuning.centreK ?? 8;
+    return n / (n + k);
+  }
+
+  /** Adds crossings to the running centre (the riders' centroids follow). */
+  updateCentre(crossings) {
+    const max = this.tuning.centreMax ?? 60;
+    for (const c of crossings) {
+      if (!this.centre) { this.centre = { col: [...c.col], emb: c.emb ? [...c.emb] : null, n: 1 }; continue; }
+      const n = Math.min(this.centre.n + 1, max), w = 1 / n;
+      this.centre.col = this.centre.col.map((v, i) => v + (c.col[i] - v) * w);
+      if (this.centre.emb && c.emb) this.centre.emb = this.centre.emb.map((v, i) => v + (c.emb[i] - v) * w);
+      this.centre.n = n;
+    }
+    for (const r of this.riders) r.centroid = null;
   }
 
   addRider(c, name = null) {
@@ -205,9 +233,7 @@ export class RiderBook {
       if (this.fv !== null || this.riders.length) { this.riders = []; this.centre = null; }
       this.fv = fv;
     }
-    if (!this.centre) {
-      this.centre = { col: meanOf(crossings.map((c) => c.col)), emb: crossings[0].emb ? meanOf(crossings.map((c) => c.emb)) : null };
-    }
+    this.updateCentre(crossings);
     const t = this.tuning, R = this.riders.length;
     const S = crossings.map((c) => this.scores(c));
     // Columns: the known riders, then one "new rider" slot per crossing.
@@ -441,7 +467,7 @@ export function unsureLeaders(riders, keys) {
 export function bookToJSON(book) {
   return {
     v: 1, nextId: book.nextId, fv: book.fv,
-    centre: book.centre && { col: book.centre.col.map(r3), emb: book.centre.emb ? book.centre.emb.map(r3) : null },
+    centre: book.centre && { col: book.centre.col.map(r3), emb: book.centre.emb ? book.centre.emb.map(r3) : null, n: book.centre.n },
     riders: book.riders.map((r) => ({
       id: r.id, name: r.name, thumb: r.thumb,
       samples: r.samples.map((s) => ({ col: s.col.map(r3), emb: s.emb ? s.emb.map(r3) : null, sure: !!s.sure })),
@@ -454,7 +480,7 @@ export function bookFromJSON(o, tuning = RIDER_TUNING) {
   if (!o || o.v !== 1 || !Array.isArray(o.riders)) return b;
   b.nextId = Number(o.nextId) || o.riders.length + 1;
   b.fv = Number(o.fv) || 1;
-  b.centre = o.centre && Array.isArray(o.centre.col) ? { col: o.centre.col, emb: o.centre.emb || null } : null;
+  b.centre = o.centre && Array.isArray(o.centre.col) ? { col: o.centre.col, emb: o.centre.emb || null, n: Number(o.centre.n) || 20 } : null;
   b.riders = o.riders.filter((r) => r && r.id && Array.isArray(r.samples) && r.samples.length).map((r) => ({
     id: String(r.id), name: String(r.name || r.id), thumb: typeof r.thumb === 'string' ? r.thumb : null, centroid: null,
     samples: r.samples.map((s) => ({ col: s.col, emb: s.emb || null, sure: !!s.sure })),
