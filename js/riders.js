@@ -18,6 +18,7 @@ export const RIDER_TUNING = {
   maxGapMs: 90,        // same rider in frames at most this far apart...
   maxStepFrac: 0.4,    // ...moving at most this share of the frame width per 33 ms
   colourWeight: 1,     // weights of the two features in the similarity
+  regionWeights: [1, 0.8, 1.5], // colour of the upper body, legs, bike (the bike tells riders in the same kit apart)
   reidWeight: 0.5,   // re-ID counts half as much as colour (blur hurts it more)
   newRider: 0.2,       // best similarity below this: a rider not seen before
   sure: 0.5,           // best similarity at least this...
@@ -61,7 +62,7 @@ export function pickCrossings(frames, line, tuning = RIDER_TUNING) {
       if (!isRider(p, f, line, tuning)) continue;
       const cx = (p.box[0] + p.box[2]) / 2;
       const lx = lineXAt(line, f.w, f.h, (p.box[1] + p.box[3]) / 2);
-      dets.push({ t: f.t, w: f.w, h: f.h, cx, off: cx - lx, p });
+      dets.push({ t: f.t, w: f.w, h: f.h, cx, off: cx - lx, p, fv: f.fv || 1 });
     }
   }
   // Riding direction: the way most riders move from frame to frame.
@@ -89,7 +90,7 @@ export function pickCrossings(frames, line, tuning = RIDER_TUNING) {
   }
   return tracks.map((tr) => {
     const c = tr.reduce((a, b) => (Math.abs(b.off) < Math.abs(a.off) ? b : a));
-    return { t: c.t, box: c.p.box, bike: c.p.bike, col: c.p.col, emb: c.p.emb, thumb: c.p.thumb || null };
+    return { t: c.t, box: c.p.box, bike: c.p.bike, col: c.p.col, emb: c.p.emb, thumb: c.p.thumb || null, fv: c.fv };
   });
 }
 
@@ -150,12 +151,14 @@ export class RiderBook {
     this.riders = [];   // { id, name, samples: [{ col, emb, sure }], thumb, centroid }
     this.centre = null; // { col, emb }
     this.nextId = 1;
+    this.fv = null;     // colour features version (the app's RiderVision.FEATURES); riders learnt with another are dropped
   }
 
   /** Comparable vector of a crossing (centred, both parts scaled to length 1, weighted). */
   vec(c) {
     const t = this.tuning;
-    const col = norm(sub(c.col, this.centre.col)).map((v) => v * t.colourWeight);
+    const rw = t.regionWeights || [1, 1, 1], n = c.col.length / 3;
+    const col = norm(sub(c.col, this.centre.col).map((v, i) => v * rw[Math.min(2, Math.floor(i / n))])).map((v) => v * t.colourWeight);
     const emb = c.emb && this.centre.emb ? norm(sub(c.emb, this.centre.emb)).map((v) => v * t.reidWeight) : [];
     return norm(col.concat(emb));
   }
@@ -197,6 +200,11 @@ export class RiderBook {
    */
   addLap(crossings) {
     if (!crossings.length) return [];
+    const fv = crossings[0].fv || 1;
+    if (this.fv !== fv) {
+      if (this.fv !== null || this.riders.length) { this.riders = []; this.centre = null; }
+      this.fv = fv;
+    }
     if (!this.centre) {
       this.centre = { col: meanOf(crossings.map((c) => c.col)), emb: crossings[0].emb ? meanOf(crossings.map((c) => c.emb)) : null };
     }
@@ -432,7 +440,7 @@ export function unsureLeaders(riders, keys) {
 /** The book as plain data (rounded), to keep between sessions. */
 export function bookToJSON(book) {
   return {
-    v: 1, nextId: book.nextId,
+    v: 1, nextId: book.nextId, fv: book.fv,
     centre: book.centre && { col: book.centre.col.map(r3), emb: book.centre.emb ? book.centre.emb.map(r3) : null },
     riders: book.riders.map((r) => ({
       id: r.id, name: r.name, thumb: r.thumb,
@@ -445,6 +453,7 @@ export function bookFromJSON(o, tuning = RIDER_TUNING) {
   const b = new RiderBook(tuning);
   if (!o || o.v !== 1 || !Array.isArray(o.riders)) return b;
   b.nextId = Number(o.nextId) || o.riders.length + 1;
+  b.fv = Number(o.fv) || 1;
   b.centre = o.centre && Array.isArray(o.centre.col) ? { col: o.centre.col, emb: o.centre.emb || null } : null;
   b.riders = o.riders.filter((r) => r && r.id && Array.isArray(r.samples) && r.samples.length).map((r) => ({
     id: String(r.id), name: String(r.name || r.id), thumb: typeof r.thumb === 'string' ? r.thumb : null, centroid: null,
