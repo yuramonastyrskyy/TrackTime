@@ -8,6 +8,7 @@ import { buildStripLine, unionBox, readStripRGBA, StripBuffer, PF } from './phot
 import { PhotoFinishViewer } from './finishView.js';
 import { SessionRecorder, store, formatBytes } from './recorder.js';
 import { LapSender, linkOverrides, normalizeCode } from './lapLink.js';
+import { LapBoard, boardSupported } from './board.js';
 import { planFromHash, planToHash, planProgress, boardParts, bandTag, summarize } from './plan.js';
 import {
   newSession, sessionStart, sessionLap, sessionUndo,
@@ -31,7 +32,8 @@ const els = {
   copyBtn: $('copyBtn'), clearBtn: $('clearBtn'), copyNote: $('copyNote'), highContrast: $('highContrast'),
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkStatusText: $('linkStatusText'), linkPill: $('linkPill'),
-  restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), finish: $('finish'),
+  boardBtn: $('boardBtn'), boardStatus: $('boardStatus'), boardStatusText: $('boardStatusText'), boardBright: $('boardBright'),
+  restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), fpsMax: $('fpsMax'), finish: $('finish'),
   planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planMain: $('planMain'),
   planSwatch: $('planSwatch'), planWhere: $('planWhere'), planTarget: $('planTarget'), planLeft: $('planLeft'),
   planSub: $('planSub'), planDone: $('planDone'), planDoneSub: $('planDoneSub'),
@@ -161,6 +163,38 @@ function renderLink(s) {
   }
   els.linkStatusText.textContent = text;
 }
+// ---------- LED time board (Bluetooth) ----------
+const board = new LapBoard({ onState: renderBoard });
+// Message: colour|time|line, e.g. "g|23.8|b". With a Pacemaker plan the time
+// takes the lap's band colour (else 'a', amber) and a bar on the right shows
+// where the current block rides: red (below red / corridor), blue, yellow (above blue).
+const BOARD_BAND = { good: 'g', slow: 'o', veryslow: 'r', fast: 'p' };
+const BOARD_LINE = { red: 'r', corridor: 'r', blue: 'b', above: 'y' };
+function boardLine() {
+  const p = plan ? currentProgress() : null;
+  if (!p || p.done || !p.block || p.block.kind !== 'ride') return '';
+  return BOARD_LINE[p.block.where] || '';
+}
+function boardShowLast() {
+  const laps = counter.laps;
+  const last = laps[laps.length - 1];
+  const r = last ? currentProgress()?.results?.[laps.length - 1] : null;
+  const c = (r && !r.break ? BOARD_BAND[r.band] : null) || 'a';
+  const line = boardLine();
+  board.show(`${c}|${last ? formatLap(last.ms, 1) : '--'}${line ? `|${line}` : ''}`);
+}
+function renderBoard(s) {
+  if (!els.boardBtn) return;
+  els.boardBtn.textContent = s.state === 'off' ? 'Connect time board' : 'Disconnect time board';
+  els.boardStatus.hidden = s.state === 'off' && !s.detail;
+  els.boardStatus.classList.toggle('ok', s.state === 'on');
+  const name = s.name || 'board';
+  els.boardStatusText.textContent = s.state === 'on' ? `Connected to ${name}. Showing ${s.text}.`
+    : s.state === 'connecting' ? `Connecting to ${name}…`
+    : s.state === 'lost' ? `Lost ${name}. ${s.detail || 'Reconnecting…'}`
+    : s.detail || '';
+}
+if (boardSupported()) board.restore().then((ok) => { if (ok) board.brightness(settings.boardBrightness ?? 60); });
 /** Wall-clock time (epoch ms) of a frame time from the detector clock. */
 function frameEpoch(t) {
   if (timeSource === 'native') return ncam.epochOffset + t; // sensor clock + its offset
@@ -227,6 +261,7 @@ function currentProgress() {
 // only text and a few classes change, never the layout around it.
 function renderPlan() {
   els.planStrip.hidden = !planShown();
+  boardShowLast(); // the block (and its line) may have changed
   if (!plan) return;
   const t = boardParts(plan, currentProgress());
   setText(els.planName, plan.name);
@@ -395,7 +430,7 @@ async function startNativeCamera() {
   const cam = new NativeCamera(native);
   els.cameraBtn.disabled = true;
   try {
-    await cam.start({ fps: 60 });
+    await cam.start({ fps: nativeFps() });
   } catch (err) {
     if (err?.name === 'NotAllowedError') {
       showCameraError('Camera access was blocked', err.permanent
@@ -420,7 +455,14 @@ async function startNativeCamera() {
 // 720p: plenty for the detector (it works at 960 px). 60 fps when the phone
 // offers it, for a finer photo-finish; Record + time always uses 30 fps (half
 // the video size). The fps pill shows what the camera really gives.
-function wantedFps() { return settings.fps60 !== false && !recorder ? 60 : 30; }
+// "Top frame rate" (a test): ask for the most the camera says it can do.
+function wantedFps() {
+  if (recorder) return 30;
+  if (settings.fpsMax) return 'max';
+  return settings.fps60 !== false ? 60 : 30;
+}
+/** The app camera: 60, or 999 = its fastest range. */
+function nativeFps() { return settings.fpsMax ? 999 : 60; }
 function cameraConstraints(fps) {
   return {
     facingMode: { ideal: 'environment' },
@@ -447,6 +489,7 @@ function describeCamera() {
  * detector needs the detail more than the frame rate.
  */
 async function setCameraFps(fps) {
+  if (fps === 'max') return setCameraMaxFps();
   const vt = stream?.getVideoTracks()[0];
   if (!vt) return;
   const fr = () => safe(() => vt.getSettings().frameRate) || 0;
@@ -458,7 +501,7 @@ async function setCameraFps(fps) {
     await apply(cameraConstraints(30));
     return;
   }
-  if (fr() > 31) return;
+  if (fr() > 31 && fr() < 65) return;
   const tries = [
     cameraConstraints(60),
     { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { min: 50, ideal: 60 } },
@@ -478,6 +521,43 @@ async function setCameraFps(fps) {
     await apply(cameraConstraints(30));
   } else {
     cameraNote = '';
+  }
+  recorder?.log('detector', { detail: describeCamera() });
+}
+/**
+ * Test: asks for the top rate the camera reports (getCapabilities), at 720p,
+ * then 1080p, then any size. Keeps whatever comes, even a smaller picture,
+ * and says so in Settings.
+ */
+async function setCameraMaxFps() {
+  const vt = stream?.getVideoTracks()[0];
+  if (!vt) return;
+  const caps = safe(() => vt.getCapabilities?.()) || {};
+  const top = Math.round(caps.frameRate?.max || 0);
+  const fr = () => safe(() => vt.getSettings().frameRate) || 0;
+  const apply = async (c) => { try { await vt.applyConstraints(c); return true; } catch (e) { return e?.name || 'refused'; } };
+  const base = { facingMode: { ideal: 'environment' } };
+  if (!top) {
+    cameraNote = 'Top rate: the browser does not say what the camera can do; asked for 60.';
+    await apply(cameraConstraints(60));
+  } else {
+    const floor = Math.max(31, Math.floor(top * 0.9));
+    const tries = [
+      { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: top } },
+      { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { min: floor, ideal: top } },
+      { ...base, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { min: floor, ideal: top } },
+      { ...base, frameRate: { min: floor, ideal: top } },
+    ];
+    const notes = [];
+    for (const c of tries) {
+      const r = await apply(c);
+      if (r !== true) { notes.push(r); continue; }
+      if (fr() >= floor) break;
+    }
+    const got = Math.round(fr());
+    cameraNote = got >= floor
+      ? `Top rate: asked for ${top}, got ${got}.`
+      : `Top rate: asked for ${top}, got ${got}${notes.length ? ` (${[...new Set(notes)].join(', ')})` : ''}.`;
   }
   recorder?.log('detector', { detail: describeCamera() });
 }
@@ -728,6 +808,7 @@ function startTiming() {
   announcer.unlock(); // inside the tap, so phones allow sound
   counter.ignoreMs = settings.ignoreSec * 1000;
   counter.reset();
+  boardShowLast();
   finishes.clear();
   finishSession();
   session = newSession({ plan, settings: sessionSettings() });
@@ -813,6 +894,7 @@ function onCrossing(t) {
   if (r.type === 'start' || r.type === 'lap') {
     const at = frameEpoch(t);
     lapLink.sendCrossing(at, r.type === 'start' ? 0 : r.lap);
+    boardShowLast();
     if (session) {
       if (r.type === 'start') sessionStart(session, at); else sessionLap(session, r.lap, r.ms, at);
       persistSession();
@@ -1004,6 +1086,7 @@ els.undoBtn.addEventListener('click', () => {
   renderPlan();
   recorder?.log('undo', { lap: undone?.lap, detail: undone ? 'lap' : 'start' });
   if (counter.startTime === null && (state === 'timing')) setState('armed');
+  boardShowLast();
   renderLaps();
   if (!els.summary.hidden) renderSummary();
 });
@@ -1291,9 +1374,12 @@ function fillSettings() {
   els.recordSound.checked = !!settings.recordSound;
   els.countSingles.checked = !!settings.countSingles;
   els.stopwatchCode.value = settings.stopwatchCode;
+  els.boardBright.value = settings.boardBrightness ?? 60;
+  renderBoard({ state: board.state, name: board.device?.name || '', detail: '', text: board.last });
   els.restBetweenLaps.checked = settings.restBetweenLaps !== false;
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
+  els.fpsMax.checked = !!settings.fpsMax;
   fillRidersSettings();
   if (!native) $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 }
@@ -1317,6 +1403,33 @@ els.stopwatchCode.addEventListener('change', () => {
   settings.stopwatchCode = normalizeCode(els.stopwatchCode.value);
   els.stopwatchCode.value = settings.stopwatchCode;
   lapLink.setCode(settings.stopwatchCode);
+  save();
+});
+els.boardBtn.addEventListener('click', async () => {
+  if (board.state !== 'off') { board.disconnect(); return; }
+  els.boardStatus.hidden = false;
+  els.boardStatusText.textContent = 'Opening the Bluetooth list…';
+  if (!boardSupported()) {
+    els.boardStatus.hidden = false;
+    els.boardStatusText.textContent = native
+      ? 'This version of the app has no Bluetooth yet. Install the newest TrackTime app.'
+      : 'No Bluetooth in this browser. Use Chrome on Android, or in Brave turn on brave://flags/#brave-web-bluetooth-api.';
+    return;
+  }
+  try {
+    await board.connect();
+    board.brightness(settings.boardBrightness ?? 60);
+  } catch (e) {
+    if (e?.name === 'NotFoundError' && /cancel/i.test(e.message || '')) return; // picker closed
+    els.boardStatus.hidden = false;
+    els.boardStatusText.textContent = /adapter|not available|disabled/i.test(e?.message || '')
+      ? 'Bluetooth is off or not allowed. Turn on Bluetooth (and Location on Android), give Chrome the Nearby devices permission, then try again.'
+      : `Could not connect: ${e?.name || ''} ${e?.message || e}`;
+  }
+});
+els.boardBright.addEventListener('change', () => {
+  settings.boardBrightness = Math.min(255, Math.max(10, Math.round(Number(els.boardBright.value)) || 60));
+  board.brightness(settings.boardBrightness);
   save();
 });
 // Number stepper: −/+ around the same number field.
@@ -1372,6 +1485,7 @@ els.clearBtn.addEventListener('click', () => {
   resetClear();
   recorder?.log('clear');
   counter.reset();
+  boardShowLast();
   finishes.clear(); finishPending = [];
   // Laps timed so far stay in Settings > Sessions; timing carries on as a new session.
   if (session) { finishSession(); session = newSession({ plan, settings: sessionSettings() }); }
@@ -1426,7 +1540,7 @@ function setupNative() {
   window.__ttNativeIntent = take;
   take();
   els.nativeGroup.hidden = false;
-  // Photo-finish: the app camera is always 60 fps, so only say how to see it.
+  // Photo-finish: the app camera runs at 60 fps (or its top rate, as a test).
   els.fps60.closest('label').hidden = true;
   $('camInfo').textContent = 'Always on in the app: tap a lap time (or the big last lap) to see the picture of that crossing.';
 }
@@ -1440,6 +1554,7 @@ function fillCamera(i = ncam?.info()) {
   if (!i) return;
   if (!ncam) { els.camRate.textContent = 'Turn on the camera to see it.'; return; }
   let rate = `${i.fps || 0} fps now, target ${i.fpsTarget ?? '?'}`;
+  if (settings.fpsMax) rate += ` · camera ranges: ${i.fpsRanges || '?'} · slow-motion: ${i.highSpeed || (i.version >= 3 ? 'none' : 'update the app to see')}`;
   if (camStats) {
     const low = Number.isFinite(camStats.minFps) ? camStats.minFps : i.fps;
     rate += ` · since Start: lowest ${low}, ${Math.max(0, (i.dropped || 0) - camStats.dropped0)} frames dropped`;
@@ -1527,6 +1642,7 @@ function stopRiders() {
 function attachRiders(s) {
   if (!riderRun || !s) return;
   s.riders = riderRun.summary([0, ...s.laps.map((l) => l.lap)]);
+  try { s.riders.stats = ncam?.ridersInfo() || null; } catch { /* only for checking afterwards */ }
   persistSession(s);
   saveRiderBook();
 }
@@ -1583,6 +1699,22 @@ els.sayGap.addEventListener('change', () => { settings.sayGap = els.sayGap.check
 els.fps60.addEventListener('change', async () => {
   settings.fps60 = els.fps60.checked; save();
   if (stream && !isActive()) await setCameraFps(wantedFps());
+  $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
+});
+els.fpsMax.addEventListener('change', async () => {
+  settings.fpsMax = els.fpsMax.checked; save();
+  if (isActive()) return; // takes effect at the next Stop
+  if (ncam) {
+    // The app picks its rate when the camera starts: start it again.
+    ncam.stop();
+    await new Promise((r) => setTimeout(r, 400));
+    try { await ncam.start({ fps: nativeFps() }); } catch { /* the fps pill shows it */ }
+    if (detector) { try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ } }
+    drawOverlay();
+    fillCamera();
+    return;
+  }
+  if (stream) await setCameraFps(wantedFps());
   $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 });
 els.countSingles.addEventListener('change', () => {
@@ -1711,6 +1843,7 @@ initLists({
   livePictures: (s) => (s === lastSession && !session && finishes.size ? finishes : null),
   openFinish: openSavedFinish,
   openRiders: (s) => ridersView.open(s),
+  riderBook: () => bookToJSON(riderBook),
   backToSettings: () => {
     fillSettings();
     fillTiles();

@@ -22,7 +22,8 @@ const WHERE_TEXT = {
 const WHERE_ALIASES = {
   red: ['red', 'under red', 'underred', 'below red', 'belowred', 'sprint', 'sprinter', 'sprinters', 'червона', 'червоний', 'під червоною', 'до червоної', 'нижче червоної'],
   blue: ['blue', 'under blue', 'underblue', 'below blue', 'belowblue', 'stayer', 'синя', 'синій', 'під синьою', 'до синьої', 'нижче синьої'],
-  corridor: ['corridor', 'between', 'between red and blue', 'between lines', 'коридор', 'між лініями', 'між червоною і синьою'],
+  // The corridor is the strip between the black and the red line (below red).
+  corridor: ['corridor', 'between black and red', 'коридор', 'між чорною і червоною'],
   above: ['above blue', 'aboveblue', 'over blue', 'above', 'вище синьої', 'над синьою'],
   any: ['any', 'anywhere', 'free', 'будь-де', 'вільно'],
 };

@@ -257,6 +257,10 @@
                 <span class="lbl"><b>Camera at 60 fps</b><small>Sharper photo-finish when the phone offers it; the fps pill shows what you get. Record + time always uses 30 fps. Tap a lap to see its picture.</small></span>
                 <input id="fps60" class="sw" type="checkbox" checked>
               </label>
+              <label class="row">
+                <span class="lbl"><b>Top frame rate (test)</b><small>Asks the camera for the most frames per second it says it can do, in the browser and in the app. Below shows what it offers and what you get. Record + time still uses 30 fps.</small></span>
+                <input id="fpsMax" class="sw" type="checkbox">
+              </label>
               <p id="camInfo" class="row meta" role="status"></p>
             </div>
           </section>
@@ -289,6 +293,21 @@
                 </span>
               </div>
             </div>
+          </section>
+
+          <section class="group" aria-labelledby="gBoard">
+            <h3 id="gBoard" class="group-h">Time board</h3>
+            <div class="card">
+              <div class="row stack">
+                <span class="lbl"><b>LED time board</b><small>Shows each lap time on the battery LED board over Bluetooth (in the TrackTime app, or Chrome on Android).</small></span>
+                <span id="boardStatus" class="linkstat" hidden><i></i><span id="boardStatusText"></span></span>
+              </div>
+              <label class="row">
+                <span class="lbl"><b>Brightness</b><small>Higher uses more battery.</small></span>
+                <input id="boardBright" type="range" min="10" max="255" step="5" value="60" aria-label="Time board brightness">
+              </label>
+            </div>
+            <button id="boardBtn" class="btn ghost full" type="button">Connect time board</button>
           </section>
 
           <section class="group" aria-labelledby="gLaps">
@@ -401,6 +420,7 @@
           <div id="reviewRiders" class="sum-riders" hidden>
             <div id="reviewLeaders" class="leaders" aria-label="Lap leaders"></div>
             <button id="reviewRidersBtn" class="btn sm ghost" type="button">Check riders</button>
+            <button id="reviewRidersSave" class="btn sm ghost" type="button" title="Save what the app saw (pictures + features) as a file">Save data</button>
           </div>
           <p id="reviewHint" class="note">Tap a lap to see its photo-finish.</p>
           <ol id="reviewLaps" class="rv-laps" aria-label="Laps"></ol>

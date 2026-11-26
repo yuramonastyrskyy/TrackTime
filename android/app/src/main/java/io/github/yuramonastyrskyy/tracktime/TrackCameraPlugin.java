@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.StreamConfigurationMap;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.util.Base64;
@@ -83,7 +84,7 @@ import java.util.concurrent.Executors;
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class TrackCameraPlugin extends Plugin {
 
-    static final int VERSION = 2; // 2: rider identification (riders*)
+    static final int VERSION = 4; // 2: rider identification (riders*); 3: info().highSpeed; 4: rider colour features v2 (fv)
     static final int PERM_CODE = 7101;
     private static final int MAX_QUEUE = 180; // 3 s at 60 fps if the page stops pulling
 
@@ -100,6 +101,8 @@ public class TrackCameraPlugin extends Plugin {
     private int fpsWanted = 60;
     private Range<Integer> fpsRange = null;
     private String fpsRanges = "";
+    /** Slow-motion (constrained high-speed) modes, e.g. "120 240 at 1280x720"; empty if none. */
+    private String highSpeed = "";
     private boolean manualSensor = false;
     private int timestampSource = CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_UNKNOWN;
 
@@ -280,6 +283,7 @@ public class TrackCameraPlugin extends Plugin {
         }
         fpsRanges = sb.toString();
         fpsRange = wanted != null ? wanted : best;
+        highSpeed = highSpeedText(c2);
         int[] caps = c2.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
         manualSensor = false;
         if (caps != null) for (int c : caps) if (c == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) manualSensor = true;
@@ -289,6 +293,28 @@ public class TrackCameraPlugin extends Plugin {
         evStep = c2.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
         Integer ts = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE);
         timestampSource = ts == null ? CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_UNKNOWN : ts;
+    }
+
+    /**
+     * The camera's slow-motion modes (120/240 fps). They need a special capture
+     * session that this plugin does not use yet; listed so we know what the
+     * phone could do.
+     */
+    private static String highSpeedText(Camera2CameraInfo c2) {
+        try {
+            StreamConfigurationMap m = c2.getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            if (m == null) return "";
+            java.util.TreeSet<Integer> rates = new java.util.TreeSet<>();
+            for (Range<Integer> r : m.getHighSpeedVideoFpsRanges()) rates.add(r.getUpper());
+            if (rates.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder();
+            for (Integer r : rates) sb.append(sb.length() > 0 ? " " : "").append(r);
+            sb.append(" fps at");
+            for (Size z : m.getHighSpeedVideoSizes()) sb.append(' ').append(z.getWidth()).append('x').append(z.getHeight());
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private void showPreview() {
@@ -727,6 +753,7 @@ public class TrackCameraPlugin extends Plugin {
                     o.put("fpsTarget", fpsRange == null ? JSONObject.NULL : fpsRange.getUpper());
                     o.put("fpsMin", fpsRange == null ? JSONObject.NULL : fpsRange.getLower());
                     o.put("fpsRanges", fpsRanges);
+                    o.put("highSpeed", highSpeed);
                     o.put("frames", frameCount);
                     o.put("dropped", dropped);
                     o.put("overflow", queueOverflow);
@@ -761,7 +788,7 @@ public class TrackCameraPlugin extends Plugin {
             getContext().startActivity(i);
         }
 
-        /** options: {"fps":60} */
+        /** options: {"fps":60}; a rate the camera has no range for (e.g. 999) takes its fastest range. */
         @JavascriptInterface
         public void start(String options) {
             try {

@@ -30,6 +30,10 @@ public final class RiderVision {
     public static final int HB = 18, SB = 3, VB = 3, BINS = HB * SB * VB, COLOUR_LEN = BINS * 3;
     /** Channel difference from the background that counts as "rider". */
     public static final int MASK_DIFF = 35;
+    /** Below this saturation or value a pixel counts as black / grey / white (no hue). */
+    public static final int GREY_S = 60, DARK_V = 45;
+    /** Version of the colour features above (the page drops riders learnt with another). */
+    public static final int FEATURES = 2;
 
     // ---------- detector ----------
 
@@ -128,9 +132,14 @@ public final class RiderVision {
     /** The bicycle under a person: overlapping across, reaching below their lower body. */
     public static Box bikeFor(Box p, List<Box> boxes) {
         Box best = null;
+        float bestSc = 0;
         for (Box b : boxes) {
             if (b.cls != 1) continue;
-            if (b.x1 < p.x2 && b.x2 > p.x1 && b.y2 > p.y2 - 0.15f * p.h() && (best == null || b.score > best.score)) best = b;
+            float ov = Math.min(b.x2, p.x2) - Math.max(b.x1, p.x1);
+            if (ov <= 0 || b.y2 <= p.y2 - 0.15f * p.h()) continue;
+            // The bike under this rider, not the wheel of the one next to them: most overlap wins.
+            float sc = ov / Math.max(1f, b.x2 - b.x1) + 0.2f * b.score;
+            if (best == null || sc > bestSc) { best = b; bestSc = sc; }
         }
         return best;
     }
@@ -188,7 +197,10 @@ public final class RiderVision {
         if (bike != null) { bx1 = Math.min(bx1, bike.x1); bx2 = Math.max(bx2, bike.x2); by2 = Math.max(by2, bike.y2); }
         hist(rgb, bg, w, h, p.x1, p.y1, p.x2, p.y1 + 0.45f * ph, out, 0);
         hist(rgb, bg, w, h, p.x1, p.y1 + 0.45f * ph, p.x2, p.y1 + 0.75f * ph, out, BINS);
-        hist(rgb, bg, w, h, bx1, p.y1 + (bike != null ? 0.55f : 0.75f) * ph, bx2, by2, out, 2 * BINS);
+        // Bike: the detected bike, or (when the detector missed it, often at speed)
+        // the frame and wheels below the hips, a little under the rider's box.
+        if (bike == null) by2 = p.y2 + 0.1f * ph;
+        hist(rgb, bg, w, h, bx1, p.y1 + (bike != null ? 0.55f : 0.5f) * ph, bx2, by2, out, 2 * BINS);
         return out;
     }
 
@@ -201,7 +213,10 @@ public final class RiderVision {
                 int i = (y * w + x) * 3;
                 if (bg != null && !differs(rgb, bg, i)) continue;
                 toHsv(rgb[i] & 255, rgb[i + 1] & 255, rgb[i + 2] & 255, hsv);
-                int k = (hsv[0] * HB / 180) * SB * VB + (hsv[1] * SB / 256) * VB + hsv[2] * VB / 256;
+                // Black, white and grey have no steady hue: count them by brightness only
+                // (bins 0..2), so a white bike and a black one land far apart.
+                int hb = (hsv[1] < GREY_S || hsv[2] < DARK_V) ? 0 : hsv[0] * HB / 180;
+                int k = hb * SB * VB + (hsv[1] * SB / 256) * VB + hsv[2] * VB / 256;
                 out[off + Math.min(k, BINS - 1)]++;
                 sum++;
             }

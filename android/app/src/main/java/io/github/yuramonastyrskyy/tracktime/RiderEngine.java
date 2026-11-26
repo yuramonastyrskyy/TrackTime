@@ -123,7 +123,7 @@ public final class RiderEngine implements AutoCloseable {
         StringBuilder sb = new StringBuilder(people.size() * 9000 + 100);
         sb.append("{\"t\":").append(String.format(Locale.ROOT, "%.3f", t))
           .append(",\"w\":").append(w).append(",\"h\":").append(h)
-          .append(",\"cov\":").append(fmt(cov, 3)).append(",\"people\":[");
+          .append(",\"cov\":").append(fmt(cov, 3)).append(",\"fv\":").append(RiderVision.FEATURES).append(",\"people\":[");
         for (int i = 0; i < people.size(); i++) {
             RiderVision.Box p = people.get(i);
             RiderVision.Box bike = RiderVision.bikeFor(p, boxes);
