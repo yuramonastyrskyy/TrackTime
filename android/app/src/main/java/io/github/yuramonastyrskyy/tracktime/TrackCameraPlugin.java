@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.hardware.camera2.CameraCaptureSession;
+import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
@@ -17,6 +18,9 @@ import android.util.Base64;
 import android.util.Range;
 import android.util.Rational;
 import android.util.Size;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -84,9 +88,9 @@ import java.util.concurrent.Executors;
 @OptIn(markerClass = ExperimentalCamera2Interop.class)
 public class TrackCameraPlugin extends Plugin {
 
-    static final int VERSION = 4; // 2: rider identification (riders*); 3: info().highSpeed; 4: rider colour features v2 (fv)
+    static final int VERSION = 5; // 2: rider identification (riders*); 3: info().highSpeed; 4: rider colour features v2 (fv); 5: start({slowmo}), info().mode
     static final int PERM_CODE = 7101;
-    private static final int MAX_QUEUE = 180; // 3 s at 60 fps if the page stops pulling
+    private static final int MAX_QUEUE = 360; // 3 s at 120 fps if the page stops pulling
 
     private final Object lock = new Object();
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
@@ -99,6 +103,11 @@ public class TrackCameraPlugin extends Plugin {
     private String error = null;
     private String permission = "prompt";
     private int fpsWanted = 60;
+    // Slow-motion test mode (HighSpeedCamera): asked for by the page, used when the phone has it.
+    private boolean slowmoWanted = false;
+    private HighSpeedCamera hs = null;
+    private SurfaceView hsView = null;
+    private String slowmoNote = "";
     private Range<Integer> fpsRange = null;
     private String fpsRanges = "";
     /** Slow-motion (constrained high-speed) modes, e.g. "120 240 at 1280x720"; empty if none. */
@@ -197,6 +206,8 @@ public class TrackCameraPlugin extends Plugin {
             if (running) return;
             error = null;
             if (!hasCamera()) { error = "no-permission"; return; }
+            slowmoNote = "";
+            if (slowmoWanted && startSlowmo()) return;
             ListenableFuture<ProcessCameraProvider> f = ProcessCameraProvider.getInstance(getContext());
             f.addListener(() -> {
                 try {
@@ -346,6 +357,7 @@ public class TrackCameraPlugin extends Plugin {
         previewView.setX(wv.getX());
         previewView.setY(wv.getY());
         // Turning the phone: frames keep coming upright, in the new orientation.
+        if (hs != null) hs.setDisplayRotation(displayDegrees());
         if (analysis != null && previewView.getDisplay() != null) {
             analysis.setTargetRotation(previewView.getDisplay().getRotation());
         }
@@ -355,6 +367,7 @@ public class TrackCameraPlugin extends Plugin {
         getActivity().runOnUiThread(() -> {
             if (provider != null) provider.unbindAll();
             camera = null;
+            stopSlowmo();
             running = false;
             locked = false;
             if (previewView != null) previewView.setVisibility(View.GONE);
@@ -363,9 +376,130 @@ public class TrackCameraPlugin extends Plugin {
         });
     }
 
+    // ---------- slow-motion (test) ----------
+
+    /** UI thread. Starts the 120 fps slow-motion camera; false (with a note) if this phone cannot. */
+    private boolean startSlowmo() {
+        HighSpeedCamera.Choice c;
+        CameraManager cm = (CameraManager) getContext().getSystemService(android.content.Context.CAMERA_SERVICE);
+        try {
+            c = HighSpeedCamera.choose(cm, 120);
+        } catch (Exception e) {
+            slowmoNote = "slow-motion: " + e;
+            return false;
+        }
+        if (c == null) { slowmoNote = "no 120 fps slow-motion mode on the back camera"; return false; }
+        try {
+            CameraCharacteristics cc = cm.getCameraCharacteristics(c.id);
+            evRange = cc.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+            evStep = cc.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+        } catch (Exception ignored) { }
+        fpsRange = c.range;
+        timestampSource = c.timestampSource;
+        manualSensor = false;
+        slowmoNote = "slow-motion " + c;
+
+        WebView wv = getBridge().getWebView();
+        if (previewView != null) previewView.setVisibility(View.GONE);
+        if (hsView == null) {
+            hsView = new SurfaceView(getContext());
+            ViewGroup parent = (ViewGroup) wv.getParent();
+            parent.addView(hsView, 0, new ViewGroup.LayoutParams(wv.getWidth(), wv.getHeight()));
+            wv.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> placeSlowmoView());
+            hsView.getHolder().addCallback(new SurfaceHolder.Callback() {
+                @Override public void surfaceCreated(@NonNull SurfaceHolder h) { }
+                @Override public void surfaceChanged(@NonNull SurfaceHolder h, int f, int w, int ht) { if (hs != null) hs.setPreview(h.getSurface(), w, ht); }
+                @Override public void surfaceDestroyed(@NonNull SurfaceHolder h) { if (hs != null) hs.setPreview(null, 0, 0); }
+            });
+        }
+        placeSlowmoView();
+        hsView.setVisibility(View.VISIBLE);
+        wv.setBackgroundColor(Color.TRANSPARENT);
+
+        synchronized (lock) {
+            frameCount = 0; dropped = 0; queueOverflow = 0; lastTsNs = 0;
+            queueTimes.clear(); queueData.clear();
+            fpsWindowStart = 0; fpsWindowFrames = 0; fpsNow = 0;
+        }
+        hs = new HighSpeedCamera(getContext(), c, slowmoSink);
+        hs.setDisplayRotation(displayDegrees());
+        SurfaceHolder holder = hsView.getHolder();
+        if (holder.getSurface() != null && holder.getSurface().isValid()) {
+            hs.setPreview(holder.getSurface(), hsView.getWidth(), hsView.getHeight());
+        }
+        locked = false;
+        hs.start();
+        applyLock();
+        running = true;
+        getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        return true;
+    }
+
+    /** UI thread. */
+    private void stopSlowmo() {
+        if (hs != null) { hs.stop(); hs = null; }
+        if (hsView != null) hsView.setVisibility(View.GONE);
+    }
+
+    private void placeSlowmoView() {
+        if (hsView == null) return;
+        WebView wv = getBridge().getWebView();
+        ViewGroup.LayoutParams lp = hsView.getLayoutParams();
+        if (lp.width != wv.getWidth() || lp.height != wv.getHeight()) {
+            lp.width = wv.getWidth();
+            lp.height = wv.getHeight();
+            hsView.setLayoutParams(lp);
+        }
+        hsView.setX(wv.getX());
+        hsView.setY(wv.getY());
+        if (hs != null) hs.setDisplayRotation(displayDegrees());
+    }
+
+    @SuppressWarnings("deprecation")
+    private int displayDegrees() {
+        int r = getActivity().getWindowManager().getDefaultDisplay().getRotation();
+        switch (r) {
+            case Surface.ROTATION_90: return 90;
+            case Surface.ROTATION_180: return 180;
+            case Surface.ROTATION_270: return 270;
+            default: return 0;
+        }
+    }
+
+    private final HighSpeedCamera.Sink slowmoSink = new HighSpeedCamera.Sink() {
+        @Override public float[] points() { synchronized (lock) { return points; } }
+        @Override public int pointsVersion() { synchronized (lock) { return pointsVersion; } }
+        @Override public void frame(long tsNs, byte[] luma, int dispW, int dispH, int rot, HighSpeedCamera.Source src) {
+            synchronized (lock) { width = dispW; height = dispH; rotation = rot; }
+            if (ridersOn) riderFrame(src, tsNs);
+            deliver(tsNs, luma);
+        }
+        @Override public void result(Long e, Integer iso, Float fd, Integer ae) {
+            if (e != null) lastExposureNs = e;
+            if (iso != null) lastIso = iso;
+            if (fd != null) lastFocus = fd;
+            lastAeState = ae;
+        }
+        @Override public void failed(String e) { error = e; }
+        @Override public void started() { error = null; }
+    };
+
+    @Override
+    protected void handleOnPause() {
+        super.handleOnPause();
+        if (hs != null) hs.pause();
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        if (hs != null) hs.resume();
+    }
+
     // ---------- exposure + focus ----------
 
     private void applyLock() {
+        if (hs != null) { hs.setControls(locked, compensationSteps(nudgeThirds)); return; }
         if (camera == null) return;
         Camera2CameraControl cc = Camera2CameraControl.from(camera.getCameraControl());
         CaptureRequestOptions.Builder b = new CaptureRequestOptions.Builder();
@@ -438,31 +572,58 @@ public class TrackCameraPlugin extends Plugin {
                 int p = index[i];
                 out[i] = p < lim ? buf.get(p) : 0;
             }
-            if (ridersOn) riderFrame(image, rot, ts);
-            synchronized (lock) {
-                if (lastTsNs != 0 && fpsRange != null) {
-                    double frameNs = 1e9 / fpsRange.getUpper();
-                    long missing = Math.round((ts - lastTsNs) / frameNs) - 1;
-                    if (missing > 0) dropped += missing;
-                }
-                lastTsNs = ts;
-                frameCount++;
-                long now = SystemClock.elapsedRealtime();
-                if (fpsWindowStart == 0) fpsWindowStart = now;
-                fpsWindowFrames++;
-                if (now - fpsWindowStart >= 1000) {
-                    fpsNow = (int) Math.round(fpsWindowFrames * 1000.0 / (now - fpsWindowStart));
-                    fpsWindowStart = now; fpsWindowFrames = 0;
-                }
-                if (out.length != queueN) { queueTimes.clear(); queueData.clear(); queueN = out.length; }
-                queueTimes.add(new double[] { ts / 1e6 });
-                queueData.add(out);
-                while (queueData.size() > MAX_QUEUE) { queueTimes.poll(); queueData.poll(); queueOverflow++; }
-            }
+            if (ridersOn) riderFrame(imageSource(image, rot), ts);
+            deliver(ts, out);
         } catch (Exception e) {
             error = "frame: " + e;
         } finally {
             image.close();
+        }
+    }
+
+    /** Rider identification's view of a CPU (YUV) frame. */
+    private HighSpeedCamera.Source imageSource(ImageProxy image, int rot) {
+        return new HighSpeedCamera.Source() {
+            @Override public float[] luma(float[] uv) {
+                ImageProxy.PlaneProxy yp = image.getPlanes()[0];
+                ByteBuffer yb = yp.getBuffer();
+                int iw = image.getWidth(), ih = image.getHeight();
+                float[] out = new float[uv.length / 2];
+                for (int i = 0; i < out.length; i++) {
+                    int[] s = sensorPixel(uv[i * 2], uv[i * 2 + 1], iw, ih, rot);
+                    int p = s[1] * yp.getRowStride() + s[0] * yp.getPixelStride();
+                    out[i] = p < yb.limit() ? (yb.get(p) & 255) : 0;
+                }
+                return out;
+            }
+            @Override public byte[] rgbHalf(int[] size) { return toRgbHalf(image, rot, size); }
+        };
+    }
+
+    /** A frame's samples into the page's queue, with the rate and gap counts. */
+    private void deliver(long ts, byte[] out) {
+        synchronized (lock) {
+            if (lastTsNs != 0 && fpsRange != null) {
+                double frameNs = 1e9 / fpsRange.getUpper();
+                // A gap over 1 s is a pause (app in the background), not lost frames.
+                if (ts - lastTsNs < 1_000_000_000L) {
+                    long missing = Math.round((ts - lastTsNs) / frameNs) - 1;
+                    if (missing > 0) dropped += missing;
+                }
+            }
+            lastTsNs = ts;
+            frameCount++;
+            long now = SystemClock.elapsedRealtime();
+            if (fpsWindowStart == 0) fpsWindowStart = now;
+            fpsWindowFrames++;
+            if (now - fpsWindowStart >= 1000) {
+                fpsNow = (int) Math.round(fpsWindowFrames * 1000.0 / (now - fpsWindowStart));
+                fpsWindowStart = now; fpsWindowFrames = 0;
+            }
+            if (out.length != queueN) { queueTimes.clear(); queueData.clear(); queueN = out.length; }
+            queueTimes.add(new double[] { ts / 1e6 });
+            queueData.add(out);
+            while (queueData.size() > MAX_QUEUE) { queueTimes.poll(); queueData.poll(); queueOverflow++; }
         }
     }
 
@@ -539,30 +700,26 @@ public class TrackCameraPlugin extends Plugin {
     private boolean riderWorking = false;
     private byte[] yCopy = new byte[0], uCopy = new byte[0], vCopy = new byte[0];
 
-    /** Analysis thread: every riderEvery-th frame while rider identification is on. */
-    private void riderFrame(ImageProxy image, int rot, long tsNs) {
+    /** Frame thread (analysis or slow-motion): every riderEvery-th frame while rider identification is on. */
+    private void riderFrame(HighSpeedCamera.Source src, long tsNs) {
         if (++riderFrameNo % riderEvery != 0) return;
         try {
             double t = tsNs / 1e6;
-            ImageProxy.PlaneProxy yp = image.getPlanes()[0];
-            ByteBuffer yb = yp.getBuffer();
-            int iw = image.getWidth(), ih = image.getHeight();
-            float[] luma = new float[RIDER_GATE_POINTS];
             float[] l;
             synchronized (riderLock) { l = riderLine; }
+            float[] uv = new float[RIDER_GATE_POINTS * 2];
             for (int i = 0; i < RIDER_GATE_POINTS; i++) {
                 float f = (i + 0.5f) / RIDER_GATE_POINTS;
-                float u = l[0] + (l[2] - l[0]) * f, v = l[1] + (l[3] - l[1]) * f;
-                int[] s = sensorPixel(u, v, iw, ih, rot);
-                int p = s[1] * yp.getRowStride() + s[0] * yp.getPixelStride();
-                luma[i] = p < yb.limit() ? (yb.get(p) & 255) : 0;
+                uv[i * 2] = l[0] + (l[2] - l[0]) * f;
+                uv[i * 2 + 1] = l[1] + (l[3] - l[1]) * f;
             }
+            float[] luma = src.luma(uv);
             boolean wantBg;
             synchronized (riderLock) { wantBg = riderBgWanted || gateBg == null; }
             if (wantBg) {
                 // The empty track (Start timing): background for the gate and the colour mask.
                 int[] size = new int[2];
-                byte[] rgb = toRgbHalf(image, rot, size);
+                byte[] rgb = src.rgbHalf(size);
                 synchronized (riderLock) { gateBg = luma; riderBgWanted = false; busySince = -1; }
                 RiderEngine e = riderEngine;
                 if (e != null) riderExecutor.execute(() -> e.setBackground(rgb, size[0], size[1]));
@@ -577,7 +734,7 @@ public class TrackCameraPlugin extends Plugin {
                 // Now and then the empty track refreshes the colour background (light drifts).
                 if (++quietFrames % 120 == 0) {
                     int[] size = new int[2];
-                    byte[] rgb = toRgbHalf(image, rot, size);
+                    byte[] rgb = src.rgbHalf(size);
                     RiderEngine e = riderEngine;
                     if (e != null) riderExecutor.execute(() -> e.learnBackground(rgb, size[0], size[1], 0.2f));
                 }
@@ -590,7 +747,7 @@ public class TrackCameraPlugin extends Plugin {
             }
             riderBusyFrames++;
             int[] size = new int[2];
-            RiderFrame f = new RiderFrame(toRgbHalf(image, rot, size), size[0], size[1], t);
+            RiderFrame f = new RiderFrame(src.rgbHalf(size), size[0], size[1], t);
             synchronized (riderLock) {
                 if (t <= riderKeepUntil) queueRiderWork(f);
                 else {
@@ -754,6 +911,8 @@ public class TrackCameraPlugin extends Plugin {
                     o.put("fpsMin", fpsRange == null ? JSONObject.NULL : fpsRange.getLower());
                     o.put("fpsRanges", fpsRanges);
                     o.put("highSpeed", highSpeed);
+                    o.put("mode", hs != null ? "slowmo" : "normal");
+                    o.put("slowmoNote", slowmoNote);
                     o.put("frames", frameCount);
                     o.put("dropped", dropped);
                     o.put("overflow", queueOverflow);
@@ -788,13 +947,14 @@ public class TrackCameraPlugin extends Plugin {
             getContext().startActivity(i);
         }
 
-        /** options: {"fps":60}; a rate the camera has no range for (e.g. 999) takes its fastest range. */
+        /** options: {"fps":60,"slowmo":false}; a rate the camera has no range for (e.g. 999) takes its fastest range; slowmo asks for 120 fps slow-motion. */
         @JavascriptInterface
         public void start(String options) {
             try {
                 JSONObject o = new JSONObject(options == null || options.isEmpty() ? "{}" : options);
                 fpsWanted = o.optInt("fps", 60);
-            } catch (Exception ignored) { fpsWanted = 60; }
+                slowmoWanted = o.optBoolean("slowmo", false);
+            } catch (Exception ignored) { fpsWanted = 60; slowmoWanted = false; }
             startCamera();
         }
 
@@ -847,7 +1007,7 @@ public class TrackCameraPlugin extends Plugin {
         /** Freezes exposure, focus and white balance at what was metered last. */
         @JavascriptInterface
         public boolean lock() {
-            if (camera == null) return false;
+            if (camera == null && hs == null) return false;
             Long e = lastExposureNs;
             Integer iso = lastIso;
             if (manualSensor && (e == null || iso == null)) return false;

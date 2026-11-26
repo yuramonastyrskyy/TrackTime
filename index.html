@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=41">
+  <link rel="stylesheet" href="styles.css?v=42">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -226,6 +226,10 @@
               <div class="row">
                 <span class="lbl"><b>Frame rate</b><small id="camRate">–</small></span>
               </div>
+              <label class="row">
+                <span class="lbl"><b>Slow-motion 120 fps (test)</b><small>Uses the phone's slow-motion mode: a frame every 8 ms instead of 17. Needs good light. Restarts the camera; off goes back to 60.</small></span>
+                <input id="slowmo" class="sw" type="checkbox">
+              </label>
               <div class="row">
                 <span class="lbl"><b id="expLbl">Exposure</b><small id="camExposure">Automatic until you tap Start timing.</small></span>
                 <span class="seg" role="group" aria-labelledby="expLbl">
@@ -450,6 +454,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=41"></script>
+  <script type="module" src="js/app.js?v=42"></script>
 </body>
 </html>

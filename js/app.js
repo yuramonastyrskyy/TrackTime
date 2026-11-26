@@ -33,7 +33,7 @@ const els = {
   recBtn: $('recBtn'), markBtn: $('markBtn'), recInfo: $('recInfo'), recordSound: $('recordSound'), countSingles: $('countSingles'),
   stopwatchCode: $('stopwatchCode'), linkStatus: $('linkStatus'), linkStatusText: $('linkStatusText'), linkPill: $('linkPill'),
   boardBtn: $('boardBtn'), boardStatus: $('boardStatus'), boardStatusText: $('boardStatusText'), boardBright: $('boardBright'),
-  restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), fpsMax: $('fpsMax'), finish: $('finish'),
+  restBetweenLaps: $('restBetweenLaps'), fps60: $('fps60'), fpsMax: $('fpsMax'), slowmo: $('slowmo'), finish: $('finish'),
   planStrip: $('planStrip'), planName: $('planName'), planBlock: $('planBlock'), planMain: $('planMain'),
   planSwatch: $('planSwatch'), planWhere: $('planWhere'), planTarget: $('planTarget'), planLeft: $('planLeft'),
   planSub: $('planSub'), planDone: $('planDone'), planDoneSub: $('planDoneSub'),
@@ -60,7 +60,7 @@ function setText(el, text) { if (el.textContent !== text) el.textContent = text;
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, fpsMax: false, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, fpsMax: false, slowmo: false, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
@@ -426,7 +426,7 @@ async function startNativeCamera() {
   const cam = new NativeCamera(native);
   els.cameraBtn.disabled = true;
   try {
-    await cam.start({ fps: nativeFps() });
+    await startNativeWithFallback(cam);
   } catch (err) {
     if (err?.name === 'NotAllowedError') {
       showCameraError('Camera access was blocked', err.permanent
@@ -459,6 +459,8 @@ function wantedFps() {
 }
 /** The app camera: 60, or 999 = its fastest range. */
 function nativeFps() { return settings.fpsMax ? 999 : 60; }
+/** App camera options; slowmo = 120 fps slow-motion (a test; falls back to normal when the phone has none). */
+function nativeStart() { return { fps: nativeFps(), slowmo: !!settings.slowmo }; }
 function cameraConstraints(fps) {
   return {
     facingMode: { ideal: 'environment' },
@@ -1376,6 +1378,7 @@ function fillSettings() {
   els.sayGap.checked = !!settings.sayGap;
   els.fps60.checked = settings.fps60 !== false;
   els.fpsMax.checked = !!settings.fpsMax;
+  els.slowmo.checked = !!settings.slowmo;
   fillRidersSettings();
   if (!native) $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 }
@@ -1547,12 +1550,14 @@ function fillCamera(i = ncam?.info()) {
   if (!i) return;
   if (!ncam) { els.camRate.textContent = 'Turn on the camera to see it.'; return; }
   let rate = `${i.fps || 0} fps now, target ${i.fpsTarget ?? '?'}`;
+  if (i.mode === 'slowmo') rate += ` · ${i.slowmoNote}; locks exposure by itself (no manual values)`;
+  else if (settings.slowmo) rate += ` · slow-motion not used: ${i.slowmoNote || i.error || (i.version >= 5 ? 'did not start' : 'update the app')}`;
   if (settings.fpsMax) rate += ` · camera ranges: ${i.fpsRanges || '?'} · slow-motion: ${i.highSpeed || (i.version >= 3 ? 'none' : 'update the app to see')}`;
   if (camStats) {
     const low = Number.isFinite(camStats.minFps) ? camStats.minFps : i.fps;
     rate += ` · since Start: lowest ${low}, ${Math.max(0, (i.dropped || 0) - camStats.dropped0)} frames dropped`;
   }
-  if (!i.manualSensor) rate += ' · this camera has no manual exposure';
+  if (!i.manualSensor && i.mode !== 'slowmo') rate += ' · this camera has no manual exposure';
   setText(els.camRate, rate);
   setText(els.camExposure, exposureText(i));
 }
@@ -1592,8 +1597,8 @@ function startRiders(info) {
   riderWaiting = false;
   riderRun = null;
   if (!ncam?.hasRiders || settings.riders === false) return;
-  // At 60 fps every other frame is enough (the models then see 30 a second).
-  const every = (info?.fpsTarget || 60) >= 50 ? 2 : 1;
+  // About 30 frames a second is enough for the models: every 2nd at 60 fps, every 4th at 120.
+  const every = Math.max(1, Math.round((info?.fpsTarget || 60) / 30));
   if (ncam.ridersStart(settings.line, every)) {
     riderRun = new RiderRun(settings.line, riderBook);
     riderRun.sessionId = session?.id;
@@ -1697,19 +1702,35 @@ els.fps60.addEventListener('change', async () => {
 els.fpsMax.addEventListener('change', async () => {
   settings.fpsMax = els.fpsMax.checked; save();
   if (isActive()) return; // takes effect at the next Stop
-  if (ncam) {
-    // The app picks its rate when the camera starts: start it again.
-    ncam.stop();
-    await new Promise((r) => setTimeout(r, 400));
-    try { await ncam.start({ fps: nativeFps() }); } catch { /* the fps pill shows it */ }
-    if (detector) { try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ } }
-    drawOverlay();
-    fillCamera();
-    return;
-  }
+  if (ncam) { await restartNativeCamera(); return; }
   if (stream) await setCameraFps(wantedFps());
   $('camInfo').textContent = `${describeCamera()} Now: ${ratesText()}`;
 });
+els.slowmo.addEventListener('change', async () => {
+  settings.slowmo = els.slowmo.checked; save();
+  if (ncam && !isActive()) await restartNativeCamera();
+  else fillCamera();
+});
+// The app picks its rate and mode when the camera starts: start it again.
+async function restartNativeCamera() {
+  ncam.stop();
+  await new Promise((r) => setTimeout(r, 400));
+  await startNativeWithFallback(ncam);
+  if (detector) { try { prepareDetector({ keepClock: true }); setState('learning'); } catch { /* ignored */ } }
+  drawOverlay();
+  fillCamera();
+}
+/** Slow-motion that fails to start falls back to the normal camera (the note says why). */
+async function startNativeWithFallback(cam) {
+  try {
+    return await cam.start(nativeStart());
+  } catch (err) {
+    if (!settings.slowmo || err?.name === 'NotAllowedError') throw err;
+    cam.stop();
+    await new Promise((r) => setTimeout(r, 400));
+    return cam.start({ fps: nativeFps() });
+  }
+}
 els.countSingles.addEventListener('change', () => {
   settings.countSingles = els.countSingles.checked;
   save();
