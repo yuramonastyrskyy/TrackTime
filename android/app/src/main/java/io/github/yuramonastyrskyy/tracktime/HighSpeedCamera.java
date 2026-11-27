@@ -2,7 +2,11 @@ package io.github.yuramonastyrskyy.tracktime;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
+import android.hardware.HardwareBuffer;
+import android.media.Image;
+import android.media.ImageReader;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -165,6 +169,13 @@ final class HighSpeedCamera {
     private int program, aPos, aSt, uM, uTex;
     private int oesTex;
     private SurfaceTexture texture;
+    // Android 10+: frames queue in an ImageReader (GPU buffers, put on the
+    // texture by HwTexture), so a burst loses none. Otherwise, or if that
+    // fails, the SurfaceTexture, which keeps only the newest frame.
+    private ImageReader reader;
+    private volatile boolean readerMode = false;
+    volatile String inputNote = "";
+    boolean usesQueue() { return readerMode; }
     private Surface cameraSurface;
     private final float[] matrix = new float[16];
     /** An off-screen buffer of one size; each use has its own, so none is re-made per frame. */
@@ -292,7 +303,8 @@ final class HighSpeedCamera {
                 sink.started();
             }
             @Override public void onConfigureFailed(@NonNull CameraCaptureSession s) {
-                sink.failed("slow-motion: the camera refused " + choice);
+                if (readerMode) fallBackToTexture("the camera refused the frame queue");
+                else sink.failed("slow-motion: the camera refused " + choice);
             }
         };
         List<Surface> outs = Collections.singletonList(cameraSurface);
@@ -404,16 +416,57 @@ final class HighSpeedCamera {
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
 
-        texture = new SurfaceTexture(oesTex);
-        texture.setDefaultBufferSize(choice.size.getWidth(), choice.size.getHeight());
-        texture.setOnFrameAvailableListener(st -> onFrame(), glHandler);
-        cameraSurface = new Surface(texture);
+        boolean queue = Build.VERSION.SDK_INT >= 29 && HwTexture.available;
+        if (!queue) inputNote = Build.VERSION.SDK_INT < 29 ? "no frame queue before Android 10" : "no frame queue (native helper missing)";
+        setupInput(queue);
+    }
+
+    /** GL thread. The surface the camera writes to: a frame queue or the SurfaceTexture. */
+    private void setupInput(boolean queue) {
+        if (reader != null) { reader.close(); reader = null; }
+        if (cameraSurface != null) { cameraSurface.release(); cameraSurface = null; }
+        if (texture != null) { texture.release(); texture = null; }
+        geomVersion = -1; // the sample mapping differs
+        if (queue && Build.VERSION.SDK_INT >= 29) {
+            reader = ImageReader.newInstance(choice.size.getWidth(), choice.size.getHeight(), ImageFormat.PRIVATE, 8,
+                HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE);
+            reader.setOnImageAvailableListener(r -> drainImages(), glHandler);
+            cameraSurface = reader.getSurface();
+            readerMode = true;
+        } else {
+            texture = new SurfaceTexture(oesTex);
+            texture.setDefaultBufferSize(choice.size.getWidth(), choice.size.getHeight());
+            texture.setOnFrameAvailableListener(st -> onFrame(), glHandler);
+            cameraSurface = new Surface(texture);
+            readerMode = false;
+        }
+    }
+
+    /** Any thread: the frame queue did not work; carry on with the SurfaceTexture. */
+    private void fallBackToTexture(String why) {
+        if (!readerMode) return;
+        readerMode = false;
+        inputNote = why;
+        Handler g = glHandler, cam = handler;
+        if (g == null || cam == null) return;
+        cam.post(() -> {
+            try { if (session != null) session.close(); } catch (Throwable ignored) { }
+            session = null;
+            g.post(() -> {
+                setupInput(false);
+                cam.post(() -> {
+                    if (device == null) return;
+                    try { createSession(); } catch (Throwable e) { sink.failed("slow-motion session: " + e); }
+                });
+            });
+        });
     }
 
     private void releaseGl() {
         try {
             if (windowSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(eglDisplay, windowSurface);
             windowSurface = EGL14.EGL_NO_SURFACE;
+            if (reader != null) reader.close();
             if (cameraSurface != null) cameraSurface.release();
             if (texture != null) texture.release();
             if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
@@ -477,13 +530,27 @@ final class HighSpeedCamera {
 
     // ---------- frames ----------
 
-    private int rotation() { return (360 - displayDeg) % 360; } // what is left after the texture matrix
+    /**
+     * Turn from the picture on the texture to the screen. Queue: raw sensor
+     * orientation (as CameraX analysis). SurfaceTexture: its matrix already
+     * makes it upright for portrait, so only the screen rotation is left.
+     */
+    private int rotation() {
+        return readerMode ? (choice.sensorOrientation - displayDeg + 360) % 360 : (360 - displayDeg) % 360;
+    }
+
+    /** Size of the picture on the texture, before rotation(). */
+    private int baseW() { return readerMode ? choice.size.getWidth() : naturalW(); }
+    private int baseH() { return readerMode ? choice.size.getHeight() : naturalH(); }
 
     private int naturalW() { boolean t = choice.sensorOrientation % 180 != 0; return t ? choice.size.getHeight() : choice.size.getWidth(); }
     private int naturalH() { boolean t = choice.sensorOrientation % 180 != 0; return t ? choice.size.getWidth() : choice.size.getHeight(); }
 
-    /** Display point (v down) to texture coordinates before the matrix (t up). */
-    private static void st(float u, float v, int rot, float[] out, int o) {
+    /**
+     * Display point (v down) to texture coordinates before the matrix: queue
+     * buffers have their first row at t = 0; the SurfaceTexture has t up.
+     */
+    private void st(float u, float v, int rot, float[] out, int o) {
         float nx, ny;
         switch (rot) {
             case 90: nx = v; ny = 1 - u; break;
@@ -492,19 +559,63 @@ final class HighSpeedCamera {
             default: nx = u; ny = v;
         }
         out[o] = nx;
-        out[o + 1] = 1 - ny;
+        out[o + 1] = readerMode ? ny : 1 - ny;
     }
 
+    /** SurfaceTexture: latch the newest frame and handle it. */
     private void onFrame() {
-        if (closed || eglDisplay == EGL14.EGL_NO_DISPLAY) return;
+        if (closed || eglDisplay == EGL14.EGL_NO_DISPLAY || texture == null || readerMode) return;
         try {
             boolean onScreen = makeCurrent();
             texture.updateTexImage();
             texture.getTransformMatrix(matrix);
-            long ts = texture.getTimestamp();
+            handleFrame(texture.getTimestamp(), onScreen);
+        } catch (Throwable e) {
+            sink.failed("slow-motion frame: " + e);
+        }
+    }
+
+    /** Queue: every waiting frame, oldest first. */
+    private void drainImages() {
+        if (Build.VERSION.SDK_INT < 29) return;
+        while (!closed && readerMode && reader != null && eglDisplay != EGL14.EGL_NO_DISPLAY) {
+            Image img;
+            try { img = reader.acquireNextImage(); } catch (Throwable e) { img = null; }
+            if (img == null) return;
+            long eglImage = 0;
+            try {
+                boolean onScreen = makeCurrent();
+                HardwareBuffer hb = img.getHardwareBuffer();
+                if (hb != null) { eglImage = HwTexture.bind(hb, oesTex); hb.close(); }
+                if (eglImage == 0) { fallBackToTexture("frames could not be put on the GPU"); return; }
+                android.opengl.Matrix.setIdentityM(matrix, 0);
+                handleFrame(img.getTimestamp(), onScreen);
+                waitGpu(); // the buffer goes back to the camera at close()
+            } catch (Throwable e) {
+                sink.failed("slow-motion frame: " + e);
+            } finally {
+                if (eglImage != 0) HwTexture.release(eglImage);
+                img.close();
+            }
+        }
+    }
+
+    private void waitGpu() {
+        if (es3) {
+            long sync = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            GLES30.glClientWaitSync(sync, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L);
+            GLES30.glDeleteSync(sync);
+        } else {
+            GLES20.glFinish();
+        }
+    }
+
+    /** The current frame is on the texture (and matrix set): samples, riders, preview, stats. */
+    private void handleFrame(long ts, boolean onScreen) {
+        {
             int rot = rotation();
-            int dw = rot % 180 != 0 ? naturalH() : naturalW();
-            int dh = rot % 180 != 0 ? naturalW() : naturalH();
+            int dw = rot % 180 != 0 ? baseH() : baseW();
+            int dh = rot % 180 != 0 ? baseW() : baseH();
 
             long t0 = System.nanoTime();
             if (es3) samplePointsAsync(rot, ts);
@@ -534,8 +645,6 @@ final class HighSpeedCamera {
                 maxMs = statMaxNs / 1e6f;
                 statStart = now; statFrames = 0; statWorkNs = 0; statMaxNs = 0;
             }
-        } catch (Throwable e) {
-            sink.failed("slow-motion frame: " + e);
         }
     }
 
@@ -684,7 +793,7 @@ final class HighSpeedCamera {
     }
 
     /** A strip of 4 vertices covering the display picture: top-left, bottom-left, top-right, bottom-right. */
-    private static float[] quadSt(int rot) {
+    private float[] quadSt(int rot) {
         float[] s = new float[8];
         st(0, 0, rot, s, 0);
         st(0, 1, rot, s, 2);

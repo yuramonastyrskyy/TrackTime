@@ -33,6 +33,10 @@ android {
             }
         }
     }
+    // Native helper for the slow-motion camera (HwTexture).
+    externalNativeBuild {
+        cmake { path "src/main/cpp/CMakeLists.txt" }
+    }
     buildTypes {
         release {
             // Without the key (no secret yet) the release build is signed with the debug key.

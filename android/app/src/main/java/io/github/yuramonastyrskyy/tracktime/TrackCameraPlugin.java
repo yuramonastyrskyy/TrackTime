@@ -918,6 +918,8 @@ public class TrackCameraPlugin extends Plugin {
                         o.put("doneFps", hs.doneFps);
                         o.put("workMs", Math.round(hs.workMs * 10) / 10.0);
                         o.put("maxMs", Math.round(hs.maxMs * 10) / 10.0);
+                        o.put("frameQueue", hs.usesQueue());
+                        o.put("inputNote", hs.inputNote);
                     }
                     o.put("frames", frameCount);
                     o.put("dropped", dropped);
