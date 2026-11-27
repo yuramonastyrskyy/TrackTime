@@ -27,6 +27,7 @@ import android.opengl.GLES30;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.Range;
 import android.util.Size;
@@ -133,14 +134,16 @@ final class HighSpeedCamera {
     private final Context context;
     private final Choice choice;
     private final Sink sink;
-    private HandlerThread thread;
-    private Handler handler;
+    // Camera control and capture results on one thread; frames on their own
+    // high-priority thread, so a frame is picked up before the next replaces it.
+    private HandlerThread thread, glThread;
+    private Handler handler, glHandler;
 
     // Camera (thread).
     private CameraDevice device;
     private CameraConstrainedHighSpeedCaptureSession session;
     private boolean paused = false;
-    private boolean closed = false;
+    private volatile boolean closed = false;
 
     // Controls (any thread; applied on the thread).
     private volatile boolean locked = false;
@@ -174,9 +177,11 @@ final class HighSpeedCamera {
     private final long[] pboTs = new long[2];
     private int pboNext = 0;
     // Rates for the page (info): camera results and frames handled per second, work per frame.
-    private long statStart = 0, statResults = 0, statFrames = 0, statWorkNs = 0;
+    private long statStart = 0, statFrames = 0, statWorkNs = 0;
+    private final java.util.concurrent.atomic.AtomicLong statResults = new java.util.concurrent.atomic.AtomicLong();
     volatile int camFps = 0, doneFps = 0;
-    volatile float workMs = 0;
+    volatile float workMs = 0, maxMs = 0;
+    private long statMaxNs = 0;
     private ByteBuffer readBuf = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder());
 
     // Sample point geometry, rebuilt when the points or the rotation change.
@@ -192,29 +197,39 @@ final class HighSpeedCamera {
     // ---------- public (any thread) ----------
 
     void start() {
-        thread = new HandlerThread("tt-slowmo");
+        thread = new HandlerThread("tt-slowmo-cam");
         thread.start();
         handler = new Handler(thread.getLooper());
-        handler.post(() -> {
+        glThread = new HandlerThread("tt-slowmo", Process.THREAD_PRIORITY_URGENT_DISPLAY);
+        glThread.start();
+        glHandler = new Handler(glThread.getLooper());
+        Handler cam = handler;
+        glHandler.post(() -> {
             try {
                 initGl();
-                open();
             } catch (Throwable e) {
-                sink.failed("slow-motion: " + e);
+                sink.failed("slow-motion GL: " + e);
+                return;
             }
+            cam.post(() -> {
+                try { open(); } catch (Throwable e) { sink.failed("slow-motion: " + e); }
+            });
         });
     }
 
     void stop() {
         Handler h = handler;
         if (h == null) return;
+        Handler g = glHandler;
+        HandlerThread t = thread, gt = glThread;
+        closed = true;
         h.post(() -> {
-            closed = true;
             closeCamera();
-            releaseGl();
-            thread.quitSafely();
+            g.post(() -> { releaseGl(); gt.quitSafely(); });
+            t.quitSafely();
         });
         handler = null;
+        glHandler = null;
     }
 
     /** App to the background: the camera has to be given back. */
@@ -322,7 +337,7 @@ final class HighSpeedCamera {
     private final CameraCaptureSession.CaptureCallback results = new CameraCaptureSession.CaptureCallback() {
         @Override
         public void onCaptureCompleted(@NonNull CameraCaptureSession s, @NonNull CaptureRequest r, @NonNull TotalCaptureResult res) {
-            statResults++;
+            statResults.incrementAndGet();
             sink.result(res.get(CaptureResult.SENSOR_EXPOSURE_TIME), res.get(CaptureResult.SENSOR_SENSITIVITY),
                 res.get(CaptureResult.LENS_FOCUS_DISTANCE), res.get(CaptureResult.CONTROL_AE_STATE));
         }
@@ -391,7 +406,7 @@ final class HighSpeedCamera {
 
         texture = new SurfaceTexture(oesTex);
         texture.setDefaultBufferSize(choice.size.getWidth(), choice.size.getHeight());
-        texture.setOnFrameAvailableListener(st -> onFrame(), handler);
+        texture.setOnFrameAvailableListener(st -> onFrame(), glHandler);
         cameraSurface = new Surface(texture);
     }
 
@@ -507,14 +522,17 @@ final class HighSpeedCamera {
                 EGL14.eglSwapBuffers(eglDisplay, windowSurface);
             }
             statFrames++;
-            statWorkNs += System.nanoTime() - t0;
+            long took = System.nanoTime() - t0;
+            statWorkNs += took;
+            statMaxNs = Math.max(statMaxNs, took);
             if (statStart == 0) statStart = now;
             if (now - statStart >= 1000) {
                 double sec = (now - statStart) / 1000.0;
-                camFps = (int) Math.round(statResults / sec);
+                camFps = (int) Math.round(statResults.getAndSet(0) / sec);
                 doneFps = (int) Math.round(statFrames / sec);
                 workMs = statFrames > 0 ? statWorkNs / 1e6f / statFrames : 0;
-                statStart = now; statResults = 0; statFrames = 0; statWorkNs = 0;
+                maxMs = statMaxNs / 1e6f;
+                statStart = now; statFrames = 0; statWorkNs = 0; statMaxNs = 0;
             }
         } catch (Throwable e) {
             sink.failed("slow-motion frame: " + e);
