@@ -91,13 +91,15 @@ Lap times use the camera's frame timestamps, so they are accurate to one frame (
 
 Code:
 - `js/detector.js`: line sampling, crossing detection and lap logic (no browser APIs, tested in Node).
-- `js/speech.js`: announcements, using the phone's voice or the recorded clips in `audio/en/`.
+- `js/speech.js`: announcements, using the coach's voice (`audio/coach/`), the phone's voice or the recorded clips in `audio/en/`.
 - `js/app.js`: camera, markers, screens and settings.
 - `js/lists.js`: Settings → Recordings and Sessions lists, and Send to Pacemaker.
 - `js/recorder.js`: Record + log mode (video parts, IndexedDB storage, log and CSV, sharing), and storage for timing sessions.
 - `js/plan.js`: Pacemaker plans: reading the link, the plan clock, targets, breaks and lap colours (no browser APIs, tested in Node).
 - `js/session.js`: timing sessions and sending them to Pacemaker (tested in Node).
 - `sw.js`, `manifest.webmanifest`: offline use and "Add to Home Screen".
+
+**Coach voice** (the default) calls lap times the way the coach does: units + tenths, so 23.7 is "три-сім", in an AI clone of her voice (made with her consent), dialect included. With a plan, the gap is said the same way ("плюс" + "ноль-три") and "Наступний блок" too. All 100 calls are stored clips, so it works offline. See `audio/coach/README.md`; to change how a call sounds, edit `scripts/coach-voice/calls.txt` and regenerate it.
 
 The clips in `audio/en/` are generated with espeak-ng. You can replace any of them with your own recordings (for example the coach's voice) as long as the file names stay the same.
 

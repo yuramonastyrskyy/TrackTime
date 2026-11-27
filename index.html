@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <!-- ?v= : bump with each release so in-app browsers without the service worker also load the new files. -->
-  <link rel="stylesheet" href="styles.css?v=41">
+  <link rel="stylesheet" href="styles.css?v=42">
   <script src="https://telegram.org/js/telegram-web-app.js" async></script>
 </head>
 <body class="tt">
@@ -268,6 +268,7 @@
           <section class="group" aria-labelledby="gVoice">
             <h3 id="gVoice" class="group-h">Voice</h3>
             <div id="voice" class="card" role="radiogroup" aria-labelledby="gVoice">
+              <label class="opt"><input type="radio" name="voice" value="coach"><span>Coach voice<small>Units and tenths, like the coach: 23.7 is “три-сім”.</small></span></label>
               <label class="opt"><input type="radio" name="voice" value="auto"><span>Automatic</span></label>
               <label class="opt"><input type="radio" name="voice" value="phone"><span>Phone voice</span></label>
               <label class="opt"><input type="radio" name="voice" value="clips"><span>Recorded clips<small>Use if you hear nothing inside Telegram.</small></span></label>
@@ -450,6 +451,6 @@
       </form>
     </dialog>
   </main>
-  <script type="module" src="js/app.js?v=41"></script>
+  <script type="module" src="js/app.js?v=42"></script>
 </body>
 </html>
