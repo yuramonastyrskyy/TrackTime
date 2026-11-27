@@ -1550,7 +1550,7 @@ function fillCamera(i = ncam?.info()) {
   if (!i) return;
   if (!ncam) { els.camRate.textContent = 'Turn on the camera to see it.'; return; }
   let rate = `${i.fps || 0} fps now, target ${i.fpsTarget ?? '?'}`;
-  if (i.mode === 'slowmo') rate += ` · ${i.slowmoNote}; locks exposure by itself (no manual values)`;
+  if (i.mode === 'slowmo') rate += ` · ${i.slowmoNote}; camera gives ${i.camFps ?? '?'}/s, handled ${i.doneFps ?? '?'}/s, ${i.workMs ?? '?'} ms per frame; locks exposure by itself`;
   else if (settings.slowmo) rate += ` · slow-motion not used: ${i.slowmoNote || i.error || (i.version >= 5 ? 'did not start' : 'update the app')}`;
   if (settings.fpsMax) rate += ` · camera ranges: ${i.fpsRanges || '?'} · slow-motion: ${i.highSpeed || (i.version >= 3 ? 'none' : 'update the app to see')}`;
   if (camStats) {

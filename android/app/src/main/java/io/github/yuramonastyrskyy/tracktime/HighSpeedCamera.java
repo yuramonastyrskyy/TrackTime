@@ -23,6 +23,7 @@ import android.opengl.EGLDisplay;
 import android.opengl.EGLSurface;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
+import android.opengl.GLES30;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -65,7 +66,10 @@ final class HighSpeedCamera {
     interface Sink {
         float[] points();
         int pointsVersion();
-        void frame(long tsNs, byte[] luma, int dispW, int dispH, int rotation, Source src);
+        /** The current frame, for rider identification (src valid only during the call). */
+        void rider(long tsNs, int dispW, int dispH, int rotation, Source src);
+        /** Line samples of a frame (with ES3 one frame late: the read-back is asynchronous). */
+        void frame(long tsNs, byte[] luma);
         void result(Long exposureNs, Integer iso, Float focus, Integer aeState);
         void failed(String error);
         void started();
@@ -160,8 +164,19 @@ final class HighSpeedCamera {
     private SurfaceTexture texture;
     private Surface cameraSurface;
     private final float[] matrix = new float[16];
-    private final int[] fbo = new int[1], fboTex = new int[1];
-    private int fboW = 0, fboH = 0;
+    /** An off-screen buffer of one size; each use has its own, so none is re-made per frame. */
+    private static final class Fbo { final int[] id = new int[1], tex = new int[1]; int w, h; }
+    private final Fbo pointsFbo = new Fbo(), gateFbo = new Fbo(), rgbFbo = new Fbo();
+    // ES3: line samples read back through two pixel buffers, so the GPU never stalls this thread.
+    private boolean es3 = false;
+    private final int[] pbo = new int[2];
+    private final int[] pboN = new int[2], pboW = new int[2], pboH = new int[2];
+    private final long[] pboTs = new long[2];
+    private int pboNext = 0;
+    // Rates for the page (info): camera results and frames handled per second, work per frame.
+    private long statStart = 0, statResults = 0, statFrames = 0, statWorkNs = 0;
+    volatile int camFps = 0, doneFps = 0;
+    volatile float workMs = 0;
     private ByteBuffer readBuf = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder());
 
     // Sample point geometry, rebuilt when the points or the rotation change.
@@ -307,6 +322,7 @@ final class HighSpeedCamera {
     private final CameraCaptureSession.CaptureCallback results = new CameraCaptureSession.CaptureCallback() {
         @Override
         public void onCaptureCompleted(@NonNull CameraCaptureSession s, @NonNull CaptureRequest r, @NonNull TotalCaptureResult res) {
+            statResults++;
             sink.result(res.get(CaptureResult.SENSOR_EXPOSURE_TIME), res.get(CaptureResult.SENSOR_SENSITIVITY),
                 res.get(CaptureResult.LENS_FOCUS_DISTANCE), res.get(CaptureResult.CONTROL_AE_STATE));
         }
@@ -335,16 +351,26 @@ final class HighSpeedCamera {
         if (!EGL14.eglInitialize(eglDisplay, v, 0, v, 1)) throw new RuntimeException("eglInitialize");
         int[] attrs = {
             EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+            EGL14.EGL_RENDERABLE_TYPE, 0x40 /* EGL_OPENGL_ES3_BIT_KHR */,
             EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT | EGL14.EGL_PBUFFER_BIT,
             EGL14.EGL_NONE };
         EGLConfig[] configs = new EGLConfig[1];
         int[] n = new int[1];
-        if (!EGL14.eglChooseConfig(eglDisplay, attrs, 0, configs, 0, 1, n, 0) || n[0] == 0) throw new RuntimeException("eglChooseConfig");
-        eglConfig = configs[0];
-        eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, EGL14.EGL_NO_CONTEXT,
-            new int[] { EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE }, 0);
-        if (eglContext == EGL14.EGL_NO_CONTEXT) throw new RuntimeException("eglCreateContext");
+        es3 = EGL14.eglChooseConfig(eglDisplay, attrs, 0, configs, 0, 1, n, 0) && n[0] > 0;
+        if (es3) {
+            eglConfig = configs[0];
+            eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, EGL14.EGL_NO_CONTEXT,
+                new int[] { EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE }, 0);
+            es3 = eglContext != EGL14.EGL_NO_CONTEXT;
+        }
+        if (!es3) {
+            attrs[9] = EGL14.EGL_OPENGL_ES2_BIT;
+            if (!EGL14.eglChooseConfig(eglDisplay, attrs, 0, configs, 0, 1, n, 0) || n[0] == 0) throw new RuntimeException("eglChooseConfig");
+            eglConfig = configs[0];
+            eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, EGL14.EGL_NO_CONTEXT,
+                new int[] { EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE }, 0);
+            if (eglContext == EGL14.EGL_NO_CONTEXT) throw new RuntimeException("eglCreateContext");
+        }
         pbuffer = EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, new int[] { EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE }, 0);
         EGL14.eglMakeCurrent(eglDisplay, pbuffer, pbuffer, eglContext);
 
@@ -465,17 +491,30 @@ final class HighSpeedCamera {
             int dw = rot % 180 != 0 ? naturalH() : naturalW();
             int dh = rot % 180 != 0 ? naturalW() : naturalH();
 
-            byte[] luma = samplePoints(rot);
-            sink.frame(ts, luma, dw, dh, rot, new Source() {
+            long t0 = System.nanoTime();
+            if (es3) samplePointsAsync(rot, ts);
+            else sink.frame(ts, samplePoints(rot));
+            sink.rider(ts, dw, dh, rot, new Source() {
                 @Override public float[] luma(float[] uv) { return readPoints(uv, rot); }
                 @Override public byte[] rgbHalf(int[] size) { return readRgbHalf(rot, dw, dh, size); }
             });
 
+            // The preview needs far fewer frames than the timing: about 30 a second.
             long now = SystemClock.elapsedRealtime();
-            if (onScreen && now - lastDrawMs >= 15) {
+            if (onScreen && now - lastDrawMs >= 30) {
                 lastDrawMs = now;
                 drawPreview(rot, dw, dh);
                 EGL14.eglSwapBuffers(eglDisplay, windowSurface);
+            }
+            statFrames++;
+            statWorkNs += System.nanoTime() - t0;
+            if (statStart == 0) statStart = now;
+            if (now - statStart >= 1000) {
+                double sec = (now - statStart) / 1000.0;
+                camFps = (int) Math.round(statResults / sec);
+                doneFps = (int) Math.round(statFrames / sec);
+                workMs = statFrames > 0 ? statWorkNs / 1e6f / statFrames : 0;
+                statStart = now; statResults = 0; statFrames = 0; statWorkNs = 0;
             }
         } catch (Throwable e) {
             sink.failed("slow-motion frame: " + e);
@@ -490,8 +529,9 @@ final class HighSpeedCamera {
         GLES20.glUniformMatrix4fv(uM, 1, false, matrix, 0);
     }
 
-    private void bindFbo(int w, int h) {
-        if (fbo[0] == 0 || fboW != w || fboH != h) {
+    private void bindFbo(Fbo f, int w, int h) {
+        int[] fbo = f.id, fboTex = f.tex;
+        if (fbo[0] == 0 || f.w != w || f.h != h) {
             if (fbo[0] != 0) {
                 GLES20.glDeleteFramebuffers(1, fbo, 0);
                 GLES20.glDeleteTextures(1, fboTex, 0);
@@ -504,7 +544,7 @@ final class HighSpeedCamera {
             GLES20.glGenFramebuffers(1, fbo, 0);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
             GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTex[0], 0);
-            fboW = w; fboH = h;
+            f.w = w; f.h = h;
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glViewport(0, 0, w, h);
@@ -555,6 +595,46 @@ final class HighSpeedCamera {
     }
 
     private byte[] samplePoints(int rot) {
+        if (!samplePointsDraw(rot)) return new byte[0];
+        return lumaOf(read(geomW, geomH), geomN);
+    }
+
+    /** ES3: draws this frame's samples and starts their read-back; hands over the previous frame's. */
+    private void samplePointsAsync(int rot, long ts) {
+        if (pbo[0] == 0) GLES30.glGenBuffers(2, pbo, 0);
+        int cur = pboNext, prev = 1 - cur;
+        // Draw + start reading this frame.
+        if (samplePointsDraw(rot)) {
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[cur]);
+            int need = geomW * geomH * 4;
+            if (pboW[cur] * pboH[cur] * 4 < need) {
+                GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, need, null, GLES30.GL_STREAM_READ);
+            }
+            GLES30.glReadPixels(0, 0, geomW, geomH, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0);
+            pboN[cur] = geomN; pboW[cur] = geomW; pboH[cur] = geomH; pboTs[cur] = ts;
+        } else {
+            pboN[cur] = 0; pboTs[cur] = ts;
+        }
+        // Collect the previous frame (its copy has had a whole frame to finish).
+        if (pboTs[prev] != 0) {
+            byte[] l = new byte[0];
+            if (pboN[prev] > 0) {
+                GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[prev]);
+                java.nio.Buffer m = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, pboW[prev] * pboH[prev] * 4, GLES30.GL_MAP_READ_BIT);
+                if (m instanceof ByteBuffer) {
+                    ByteBuffer b = ((ByteBuffer) m).order(ByteOrder.nativeOrder());
+                    l = lumaOf(b, pboN[prev]);
+                }
+                GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER);
+            }
+            sink.frame(pboTs[prev], l);
+        }
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0);
+        pboNext = prev;
+    }
+
+    /** Draws the samples into their buffer; false when there are none. */
+    private boolean samplePointsDraw(int rot) {
         int ver = sink.pointsVersion();
         if (ver != geomVersion || rot != geomRot) {
             float[] pts = sink.points();
@@ -566,10 +646,10 @@ final class HighSpeedCamera {
             geomSt = floats(s);
             geomVersion = ver; geomRot = rot;
         }
-        if (geomN == 0) return new byte[0];
-        bindFbo(geomW, geomH);
+        if (geomN == 0) return false;
+        bindFbo(pointsFbo, geomW, geomH);
         draw(geomPos, geomSt, GLES20.GL_POINTS, geomN);
-        return lumaOf(read(geomW, geomH), geomN);
+        return true;
     }
 
     private float[] readPoints(float[] uv, int rot) {
@@ -577,7 +657,7 @@ final class HighSpeedCamera {
         int w = gridW(n), h = Math.max(1, (n + w - 1) / w);
         float[] s = new float[n * 2];
         for (int i = 0; i < n; i++) st(uv[i * 2], uv[i * 2 + 1], rot, s, i * 2);
-        bindFbo(w, h);
+        bindFbo(gateFbo, w, h);
         draw(floats(gridPos(n, w, h)), floats(s), GLES20.GL_POINTS, n);
         byte[] l = lumaOf(read(w, h), n);
         float[] out = new float[n];
@@ -597,7 +677,7 @@ final class HighSpeedCamera {
 
     private byte[] readRgbHalf(int rot, int dw, int dh, int[] size) {
         int w = dw / 2, h = dh / 2;
-        bindFbo(w, h);
+        bindFbo(rgbFbo, w, h);
         draw(floats(new float[] { -1, 1, -1, -1, 1, 1, 1, -1 }), floats(quadSt(rot)), GLES20.GL_TRIANGLE_STRIP, 4);
         ByteBuffer b = read(w, h);
         byte[] out = new byte[w * h * 3];

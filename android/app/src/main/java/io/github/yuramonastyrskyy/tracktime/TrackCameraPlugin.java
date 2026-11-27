@@ -469,11 +469,11 @@ public class TrackCameraPlugin extends Plugin {
     private final HighSpeedCamera.Sink slowmoSink = new HighSpeedCamera.Sink() {
         @Override public float[] points() { synchronized (lock) { return points; } }
         @Override public int pointsVersion() { synchronized (lock) { return pointsVersion; } }
-        @Override public void frame(long tsNs, byte[] luma, int dispW, int dispH, int rot, HighSpeedCamera.Source src) {
+        @Override public void rider(long tsNs, int dispW, int dispH, int rot, HighSpeedCamera.Source src) {
             synchronized (lock) { width = dispW; height = dispH; rotation = rot; }
             if (ridersOn) riderFrame(src, tsNs);
-            deliver(tsNs, luma);
         }
+        @Override public void frame(long tsNs, byte[] luma) { deliver(tsNs, luma); }
         @Override public void result(Long e, Integer iso, Float fd, Integer ae) {
             if (e != null) lastExposureNs = e;
             if (iso != null) lastIso = iso;
@@ -913,6 +913,11 @@ public class TrackCameraPlugin extends Plugin {
                     o.put("highSpeed", highSpeed);
                     o.put("mode", hs != null ? "slowmo" : "normal");
                     o.put("slowmoNote", slowmoNote);
+                    if (hs != null) {
+                        o.put("camFps", hs.camFps);
+                        o.put("doneFps", hs.doneFps);
+                        o.put("workMs", Math.round(hs.workMs * 10) / 10.0);
+                    }
                     o.put("frames", frameCount);
                     o.put("dropped", dropped);
                     o.put("overflow", queueOverflow);
