@@ -1,7 +1,7 @@
 // Offline cache: the app works at the velodrome without internet after one visit.
 // Only this app's own old caches are deleted: the preview copy under /preview/
 // shares the site and keeps its caches under 'tracktime-preview-v…'.
-const VERSION = 'tracktime-v32';
+const VERSION = 'tracktime-v35';
 const CLIPS = [...Array(100).keys()].map((n) => `audio/en/${n}.m4a`).concat(['point', 'minute', 'start', 'plus', 'minus', 'nextblock'].map((w) => `audio/en/${w}.m4a`));
 // Coach clips (see js/speech.js COACH_CLIPS): whole calls 00..99 and the words in
 // her AI-cloned voice, plus the older digit clips (no a6/b6).

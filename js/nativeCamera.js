@@ -89,7 +89,7 @@ export class NativeCamera {
   }
 
   /** Asks for the camera permission if needed, starts the camera, resolves to info(). */
-  async start({ fps = 60 } = {}) {
+  async start({ fps = 60, slowmo = false } = {}) {
     let i = this.info();
     if (i.permission !== 'granted') {
       this.api.requestPermission();
@@ -101,7 +101,7 @@ export class NativeCamera {
         throw err;
       }
     }
-    this.api.start(JSON.stringify({ fps }));
+    this.api.start(JSON.stringify({ fps, slowmo }));
     i = await this.waitFor((x) => (x.running && x.width > 0) || x.error, 10000);
     if (!i.running || !i.width) throw new Error(i.error || 'The camera did not start');
     this.update(i);
