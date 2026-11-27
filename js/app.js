@@ -60,11 +60,15 @@ function setText(el, text) { if (el.textContent !== text) el.textContent = text;
 // ---------- settings ----------
 const STORE_KEY = 'tracktime.settings.v1';
 const settings = Object.assign(
-  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'auto', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, fpsMax: false, slowmo: false, line: structuredClone(DEFAULT_LINE) },
+  { ignoreSec: 14, decimals: native ? 2 : 1, voice: 'coach', recordSound: false, countSingles: false, stopwatchCode: '', sayGap: false, fps60: true, fpsMax: false, slowmo: false, line: structuredClone(DEFAULT_LINE) },
   load(),
 );
 function load() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { /* private mode */ }
+  // One-time switch to the coach's voice when it was added; a later choice sticks.
+  if (!s.coachVoiceOffered) { if (s.voice === 'auto') s.voice = 'coach'; s.coachVoiceOffered = true; }
+  return s;
 }
 function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch { /* private mode */ }
@@ -1466,7 +1470,10 @@ els.highContrast.addEventListener('change', () => { settings.highContrast = els.
 applyContrast();
 els.testVoiceBtn.addEventListener('click', async () => {
   await announcer.unlock();
-  announcer.sayLap(formatLap(17430, voiceDecimals()));
+  // A random lap between 14.0 and 25.9 s, so repeated taps play different digits.
+  const ms = 14000 + Math.floor(Math.random() * 120) * 100;
+  const text = formatLap(ms, voiceDecimals());
+  announcer.sayLap(text);
 });
 els.resetMarkersBtn.addEventListener('click', () => {
   settings.line = structuredClone(DEFAULT_LINE); save(); drawOverlay();

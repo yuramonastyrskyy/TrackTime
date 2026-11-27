@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coach voice review</title>
+<style>
+  :root { --bg: #0e1622; --card: #182334; --text: #e8edf4; --muted: #94a3b8; --ok: #3fb67a; --bad: #e5534b; --accent: #5b9cf5; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 12px; max-width: 70ch; }
+  kbd { background: var(--card); border-radius: 4px; padding: 0 5px; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; align-items: center; }
+  button { background: var(--card); color: var(--text); border: 1px solid #2a3a52; border-radius: 8px; padding: 8px 12px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .clip { background: var(--card); border: 2px solid transparent; border-radius: 10px; padding: 10px; cursor: pointer; }
+  .clip.sel { border-color: var(--accent); }
+  .clip.bad { border-color: var(--bad); }
+  .clip.good { border-color: var(--ok); }
+  .clip b { font-size: 18px; } .clip small { display: block; color: var(--muted); }
+  .clip .acts { display: flex; gap: 4px; margin-top: 6px; }
+  .clip .acts button { padding: 2px 8px; font-size: 13px; }
+  pre { background: var(--card); padding: 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Coach voice review</h1>
+<p>Click a clip to play it. Mark each one <b>good</b> or <b>redo</b>, then run the command below to regenerate the ones marked redo. Keys: <kbd>Space</kbd> play, <kbd>←</kbd>/<kbd>→</kbd> previous/next, <kbd>G</kbd> good, <kbd>R</kbd> redo, <kbd>O</kbd> play the old joined digits for comparison.</p>
+<div class="bar">
+  <button id="playAll" type="button">Play all from here</button>
+  <button id="stop" type="button">Stop</button>
+  <span id="count"></span>
+</div>
+<div id="grid" class="grid"></div>
+<h2>Redo command</h2>
+<pre id="cmd">Nothing marked redo yet.</pre>
+<script type="module">
+const OUT = 'out/';
+const OLD = '../../audio/coach/';
+const grid = document.getElementById('grid');
+let clips = [];
+let sel = 0;
+let marks = {};
+try { marks = JSON.parse(localStorage.getItem('coachReviewMarks')) || {}; } catch { /* no storage */ }
+const audio = new Audio();
+let playingAll = false;
+
+try {
+  clips = await (await fetch(`${OUT}clips.json`, { cache: 'no-cache' })).json();
+} catch {
+  grid.textContent = 'No clips yet. Generate them first: node scripts/coach-voice/generate.mjs --sample <recording>';
+}
+render();
+
+function render() {
+  grid.innerHTML = '';
+  clips.forEach((c, i) => {
+    const el = document.createElement('div');
+    el.className = `clip${i === sel ? ' sel' : ''}${marks[c.name] ? ` ${marks[c.name]}` : ''}`;
+    el.innerHTML = `<b>${c.name}</b><small>${c.text}</small><div class="acts"><button data-m="good" type="button">good</button><button data-m="bad" type="button">redo</button>${/^\d\d$/.test(c.name) ? '<button data-m="old" type="button">old</button>' : ''}</div>`;
+    el.addEventListener('click', (e) => {
+      sel = i;
+      const m = e.target.dataset?.m;
+      if (m === 'old') playOld(c.name);
+      else if (m) mark(c.name, m);
+      else play();
+      render();
+    });
+    grid.append(el);
+  });
+  const bad = clips.filter((c) => marks[c.name] === 'bad').map((c) => c.name);
+  const good = clips.filter((c) => marks[c.name] === 'good').length;
+  document.getElementById('count').textContent = `${clips.length} clips · ${good} good · ${bad.length} redo`;
+  document.getElementById('cmd').textContent = bad.length ? `node scripts/coach-voice/generate.mjs --only ${bad.join(',')}` : 'Nothing marked redo yet.';
+}
+
+function mark(name, m) {
+  marks[name] = marks[name] === m ? undefined : m;
+  try { localStorage.setItem('coachReviewMarks', JSON.stringify(marks)); } catch { /* no storage */ }
+}
+
+function play(i = sel) {
+  audio.src = `${OUT}${clips[i].name}.m4a?t=${Date.now()}`;
+  return audio.play().catch(() => {});
+}
+
+// The old way: the coach's digit clips joined, aN then bN.
+async function playOld(name) {
+  for (const [pos, d] of [['a', name[0]], ['b', name[1]]]) {
+    audio.src = `${OLD}${pos}${d}.m4a`;
+    try { await audio.play(); await new Promise((r) => { audio.onended = r; audio.onerror = r; }); } catch { /* missing digit */ }
+  }
+  audio.onended = null;
+}
+
+document.getElementById('playAll').addEventListener('click', async () => {
+  playingAll = true;
+  for (; sel < clips.length && playingAll; sel++) {
+    render();
+    await play();
+    await new Promise((r) => { audio.onended = r; audio.onerror = r; });
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  sel = Math.min(sel, clips.length - 1);
+  playingAll = false; audio.onended = null; render();
+});
+document.getElementById('stop').addEventListener('click', () => { playingAll = false; audio.pause(); });
+
+document.addEventListener('keydown', (e) => {
+  if (!clips.length) return;
+  const c = clips[sel];
+  if (e.key === ' ') { e.preventDefault(); play(); }
+  else if (e.key === 'ArrowRight') { sel = Math.min(sel + 1, clips.length - 1); play(); }
+  else if (e.key === 'ArrowLeft') { sel = Math.max(sel - 1, 0); play(); }
+  else if (e.key === 'g') mark(c.name, 'good');
+  else if (e.key === 'r') mark(c.name, 'bad');
+  else if (e.key === 'o' && /^\d\d$/.test(c.name)) playOld(c.name);
+  else return;
+  render();
+});
+</script>
+</body>
+</html>

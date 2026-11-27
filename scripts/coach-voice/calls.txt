@@ -1,0 +1,124 @@
+# Як тренерка каже кожен час кола. Один рядок на кліп: назва = текст.
+#
+# Назва: дві цифри, одиниці й десяті частки секунди. 37 звучить для кожного
+# кола, що закінчується на 3.7 (13.7, 23.7, 1:03.7). Десятки не кажемо.
+#
+# Пишіть текст так, як вона ВИМОВЛЯЄ, а не як правильно за правописом:
+# штучний голос читає літери. Приклади прийомів:
+#   37 = трі сєм          звуки, як вона їх каже
+#   66 = шіссь шіссь      проковтнуті або подвоєні звуки
+#   80 = вісєм, ноль      кома дає коротку паузу
+#   25 = двє-пять         дефіс зливає слова в одне
+# Змінили рядок, скажіть, і перегенеруємо саме ці кліпи.
+#
+# Теги в квадратних дужках ([loud][fast][screaming]) задають манеру: так клон
+# звучить найближче до тренерки. Їх розуміють лише моделі eleven_v3 і eleven_v4;
+# старіша eleven_multilingual_v2 прочитала б їх уголос.
+# Рядки з # на початку пропускаються.
+
+00 = [loud][fast][screaming] ноль-ноль
+01 = [loud][fast][screaming] ноль-одна
+02 = [loud][fast][screaming] ноль-дві
+03 = [loud][fast][screaming] ноль-три
+04 = [loud][fast][screaming] ноль-чотири
+05 = [loud][fast][screaming] ноль-п'ять
+06 = [loud][fast][screaming] ноль-шість
+07 = [loud][fast][screaming] ноль-сім
+08 = [loud][fast][screaming] ноль-вісім
+09 = [loud][fast][screaming] ноль-дев'ять
+10 = [loud][fast][screaming] один-ноль
+11 = [loud][fast][screaming] одна-одна
+12 = [loud][fast][screaming] одна-дві
+13 = [loud][fast][screaming] одна-три
+14 = [loud][fast][screaming] одна-чотири
+15 = [loud][fast][screaming] одна-п'ять
+16 = [loud][fast][screaming] одна-шість
+17 = [loud][fast][screaming] одна-сім
+18 = [loud][fast][screaming] одна-вісім
+19 = [loud][fast][screaming] одна-дев'ять
+20 = [loud][fast][screaming] дві-ноль
+21 = [loud][fast][screaming] дві-одна
+22 = [loud][fast][screaming] дві-дві
+23 = [loud][fast][screaming] дві-три
+24 = [loud][fast][screaming] дві-чотири
+25 = [loud][fast][screaming] дві-п'ять
+26 = [loud][fast][screaming] дві-шість
+27 = [loud][fast][screaming] дві-сім
+28 = [loud][fast][screaming] дві-вісім
+29 = [loud][fast][screaming] дві-дев'ять
+30 = [loud][fast][screaming] три-ноль
+31 = [loud][fast][screaming] три-одна
+32 = [loud][fast][screaming] три-дві
+33 = [loud][fast][screaming] три-три
+34 = [loud][fast][screaming] три-чотири
+35 = [loud][fast][screaming] три-п'ять
+36 = [loud][fast][screaming] три-шість
+37 = [loud][fast][screaming] три-сім
+38 = [loud][fast][screaming] три-вісім
+39 = [loud][fast][screaming] три-дев'ять
+40 = [loud][fast][screaming] чотири-ноль
+41 = [loud][fast][screaming] чотири-одна
+42 = [loud][fast][screaming] чотири-дві
+43 = [loud][fast][screaming] чотири-три
+44 = [loud][fast][screaming] чотири-чотири
+45 = [loud][fast][screaming] чотири-п'ять
+46 = [loud][fast][screaming] чотири-шість
+47 = [loud][fast][screaming] чотири-сім
+48 = [loud][fast][screaming] чотири-вісім
+49 = [loud][fast][screaming] чотири-дев'ять
+50 = [loud][fast][screaming] пять-ноль
+51 = [loud][fast][screaming] пять-одна
+52 = [loud][fast][screaming] пять-два
+53 = [loud][fast][screaming] пять-три
+54 = [loud][fast][screaming] пять-чотири
+55 = [loud][fast][screaming] пять-пять
+56 = [loud][fast][screaming] пять-шість
+57 = [loud][fast][screaming] пять-сім
+58 = [loud][fast][screaming] пять-вісім
+59 = [loud][fast][screaming] пять-дев'ять
+60 = [loud][fast][screaming] шість-ноль
+61 = [loud][fast][screaming] шість-одна
+62 = [loud][fast][screaming] шість-дві
+63 = [loud][fast][screaming] шість-три
+64 = [loud][fast][screaming] шість-чотири
+65 = [loud][fast][screaming] шість-п'ять
+66 = [loud][fast][screaming] шість-шість
+67 = [loud][fast][screaming] шість-сім
+68 = [loud][fast][screaming] шість-вісім
+69 = [loud][fast][screaming] шість-дев'ять
+70 = [loud][fast][screaming] сім-ноль
+71 = [loud][fast][screaming] сім-одна
+72 = [loud][fast][screaming] сім-дві
+73 = [loud][fast][screaming] сім-три
+74 = [loud][fast][screaming] сім-чотири
+75 = [loud][fast][screaming] сім-п'ять
+76 = [loud][fast][screaming] сім-шість
+77 = [loud][fast][screaming] сім-сім
+78 = [loud][fast][screaming] сім-вісім
+79 = [loud][fast][screaming] сім-дев'ять
+80 = [loud][fast][screaming] вісім-ноль
+81 = [loud][fast][screaming] вісім-одна
+82 = [loud][fast][screaming] вісім-дві
+83 = [loud][fast][screaming] вісім-три
+84 = [loud][fast][screaming] вісім-чотири
+85 = [loud][fast][screaming] вісім-п'ять
+86 = [loud][fast][screaming] вісім-шість
+87 = [loud][fast][screaming] вісім-сім
+88 = [loud][fast][screaming] вісім-вісім
+89 = [loud][fast][screaming] вісім-дев'ять
+90 = [loud][fast][screaming] дев'ять-ноль
+91 = [loud][fast][screaming] дев'ять-одна
+92 = [loud][fast][screaming] дев'ять-дві
+93 = [loud][fast][screaming] дев'ять-три
+94 = [loud][fast][screaming] дев'ять-чотири
+95 = [loud][fast][screaming] дев'ять-п'ять
+96 = [loud][fast][screaming] дев'ять-шість
+97 = [loud][fast][screaming] дев'ять-сім
+98 = [loud][fast][screaming] дев'ять-вісім
+99 = [loud][fast][screaming] дев'ять-дев'ять
+
+# Окремі слова
+start = [loud][fast][screaming] Оп! Поїхали!
+plus = плюс
+minus = мінус
+nextblock = Наступний блок

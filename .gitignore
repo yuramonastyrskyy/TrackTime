@@ -1,2 +1,6 @@
 node_modules/
 .DS_Store
+
+# Coach voice generation work folder (raw AI clips, voice id)
+scripts/coach-voice/out/
+scripts/coach-voice/recordings/
