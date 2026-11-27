@@ -25,3 +25,4 @@ Static web app (no build step) on GitHub Pages: velodrome lap timing from the ph
 - `js/board.js` LED time board over Web Bluetooth, or in the app via `window.TrackTimeBoard` (`TrackBoardPlugin.java`, own VERSION) (service 7a1e0001-…) · `board/time_board/time_board.ino` its ESP32 firmware (HUB75 64x32 panel, Arduino IDE), `board/pin_test/` wiring check. Keep the UUIDs in both in step.
 - `js/nativeCamera.js` the Android app's camera (window.TrackTimeNative) · `android/` Capacitor shell; native camera in `TrackCameraPlugin.java`. Gradle builds only in GitHub Actions (`android.yml`; Google's Maven is blocked in Claude's cloud container). Bump `TrackCameraPlugin.VERSION` + `NATIVE_MIN` when the interface changes.
 - `audio/en/*.m4a`: voice clips, binary; never read them.
+- `docs/HANDOFF-coach-voice.md`: state of the coach-voice work (PR #5) and how to test it on /preview/.
